@@ -1,1 +1,229 @@
-<!DOCTYPE html>\n<html lang="en">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>Quote Generation</title>\n    <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n    <h1>Quote Generation Form</h1>\n    <form id="quoteForm">\n        <label for="name">Name:</label>\n        <input type="text" id="name" name="name" required>\n        <br>\n        <label for="email">Email:</label>\n        <input type="email" id="email" name="email" required>\n        <br>\n        <label for="description">Description:</label>\n        <textarea id="description" name="description" required></textarea>\n        <br>\n        <button type="submit">Get Quote</button>\n    </form>\n    <script src="script.js"></script>\n</body>\n</html>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>出張見積もり自動化システム</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <!-- SheetJS CDN -->
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div class="container">
+          <h1>出張見積もり自動作成</h1>
+        <p class="subtitle">サンマックスレーザー / 株式会社リンシュンドウ</p>p>
+    
+        <!-- ===== 顧客情報 ===== -->
+        <section class="card">
+              <h2>顧客情報</h2>
+              <div class="form-row">
+                      <label>顧客名<span class="req">*</span>span></label>
+                      <input type="text" id="clientName" placeholder="例：大塚刷毛製造株式会社 様" required>
+              </div>div>
+              <div class="form-row">
+                      <label>顧客住所</label>
+                      <input type="text" id="clientAddress" placeholder="例：〒160-8511 東京都新宿区四谷4-1">
+              </div>div>
+              <div class="form-row">
+                      <label>見積番号</label>
+                      <input type="text" id="quoteNumber" placeholder="例：FL2601001">
+              </div>div>
+              <div class="form-row">
+                      <label>見積日</label>
+                      <input type="date" id="quoteDate">
+              </div>div>
+        </section>section>
+    
+        <!-- ===== 出張情報 ===== -->
+        <section class="card">
+              <h2>出張情報</h2>
+              <div class="form-row">
+                      <label>出張先地域<span class="req">*</span>span></label>
+                      <select id="region">
+                                <option value="">-- 選択してください --</option>option>
+                                <option value="東京">東京（350km）</option>option>
+                                <option value="大阪">大阪（600km）</option>option>
+                                <option value="名古屋">名古屋（200km）</option>option>
+                                <option value="福岡">福岡（790km）</option>option>
+                                <option value="広島">広島（700km）</option>option>
+                                <option value="札幌">札幌（1100km）</option>option>
+                                <option value="仙台">仙台（500km）</option>option>
+                                <option value="高崎">高崎（360km）</option>option>
+                                <option value="千葉">千葉（380km）</option>option>
+                                <option value="土浦">土浦（400km）</option>option>
+                                <option value="岡崎">岡崎（80km）</option>option>
+                                <option value="四日市">四日市（90km）</option>option>
+                                <option value="函館">函館（1200km）</option>option>
+                                <option value="行田">行田（340km）</option>option>
+                                <option value="岐阜">岐阜（0km）</option>option>
+                                <option value="custom">その他（km手入力）</option>option>
+                      </select>select>
+              </div>div>
+              <div class="form-row" id="customKmRow" style="display:none;">
+                      <label>片道距離（km）</label>
+                      <input type="number" id="customKm" placeholder="例：250" min="0">
+              </div>div>
+              <div class="form-row">
+                      <label>会場・住所</label>
+                      <input type="text" id="venue" placeholder="例：群馬県高崎市内（会場未定）">
+              </div>div>
+              <div class="form-row">
+                      <label>デモ予定日</label>
+                      <input type="date" id="demoDate">
+              </div>div>
+              <div class="form-row">
+                      <label>作業日数<span class="req">*</span>span></label>
+                      <input type="number" id="days" value="1" min="1" max="30">
+              </div>div>
+              <div class="form-row">
+                      <label>宿泊数</label>
+                      <input type="number" id="nights" value="0" min="0" max="30">
+              </div>div>
+              <div class="form-row">
+                      <label>人数</label>
+                      <input type="number" id="people" value="1" min="1" max="10">
+              </div>div>
+              <div class="form-row">
+                      <label>曜日区分</label>
+                      <select id="dayType">
+                                <option value="weekday">平日</option>option>
+                                <option value="weekend">休日・祝日</option>option>
+                      </select>select>
+              </div>div>
+        </section>section>
+    
+        <!-- ===== オプション ===== -->
+        <section class="card">
+              <h2>オプション項目</h2>
+              <div class="check-row">
+                      <label><input type="checkbox" id="includeLcw" checked> LCWデモ機展示設置費（20,000円）</label>
+              </div>div>
+              <div class="check-row">
+                      <label><input type="checkbox" id="includeNitrogen"> 窒素使用（5,000円/日）</label>
+              </div>div>
+              <div class="check-row">
+                      <label><input type="checkbox" id="includePartition"> パーテーション（5,000円）</label>
+              </div>div>
+              <div class="check-row">
+                      <label><input type="checkbox" id="includeWorkTable"> 保護メガネ・手袋・溶接台（5,000円）</label>
+              </div>div>
+              <div class="form-row" style="margin-top:12px;">
+                      <label>値引き額（円）</label>
+                      <input type="number" id="discount" value="0" min="0">
+              </div>div>
+        </section>section>
+    
+        <!-- ===== ボタン ===== -->
+        <div class="btn-row">
+              <button id="calcBtn" class="btn-primary">計算する</button>button>
+              <button id="excelBtn" class="btn-success" style="display:none;">Excelダウンロード</button>button>
+        </div>div>
+    
+        <!-- ===== 見積もり結果プレビュー ===== -->
+        <section id="resultSection" class="card" style="display:none;">
+              <h2>見積もり結果プレビュー</h2>
+              <table id="resultTable" class="result-table">
+                      <thead>
+                                  <tr><th>項目</th><th>金額（円）</th></tr>
+                      </thead>
+                      <tbody id="resultBody"></tbody>tbody>
+              </table>table>
+              <div class="total-box">
+                      <span>税込合計：</span>
+                      <span id="totalAmount" class="total-amount"></span>
+              </div>div>
+        </section>section>
+    </div>div>
+
+  <!-- JS読み込み -->
+  <script src="js/quote-calculator.js"></script>
+  <script src="js/excel-export.js"></script>
+  <script>
+      // ---- 初期値設定 ----
+      document.getElementById("quoteDate").value = new Date().toISOString().slice(0, 10);
+  
+      // ---- 「その他」選択時にkm入力を表示 ----
+      document.getElementById("region").addEventListener("change", function () {
+              document.getElementById("customKmRow").style.display =
+                        this.value === "custom" ? "flex" : "none";
+      });
+  
+      // 計算結果を保持
+      let lastQuote = null;
+      let lastMeta  = null;
+  
+      // ---- 計算ボタン ----
+      document.getElementById("calcBtn").addEventListener("click", function () {
+              const region    = document.getElementById("region").value;
+              const customKm  = parseInt(document.getElementById("customKm").value) || 0;
+              const days      = parseInt(document.getElementById("days").value)     || 1;
+              const nights    = parseInt(document.getElementById("nights").value)   || 0;
+              const people    = parseInt(document.getElementById("people").value)   || 1;
+              const isWeekend = document.getElementById("dayType").value === "weekend";
+              const discount  = parseInt(document.getElementById("discount").value) || 0;
+        
+                                                                if (!region) { alert("出張先地域を選択してください"); return; }
+        
+              const params = {
+                        region:           region === "custom" ? "" : region,
+                        customKm:         region === "custom" ? customKm : 0,
+                        days, nights, people, isWeekend, discount,
+                        includeLcw:        document.getElementById("includeLcw").checked,
+                        includeNitrogen:   document.getElementById("includeNitrogen").checked,
+                        includePartition:  document.getElementById("includePartition").checked,
+                        includeWorkTable:  document.getElementById("includeWorkTable").checked,
+              };
+        
+                                                                const calc  = new QuoteCalculator(params);
+              lastQuote   = calc.getQuote();
+        
+                                                                const rawDate = document.getElementById("quoteDate").value;
+              lastMeta = {
+                        clientName:    document.getElementById("clientName").value,
+                        clientAddress: document.getElementById("clientAddress").value,
+                        quoteNumber:   document.getElementById("quoteNumber").value,
+                        quoteDate:     rawDate ? rawDate.replace(/-/g, "/") : new Date().toLocaleDateString("ja-JP"),
+                        demoDate:      document.getElementById("demoDate").value.replace(/-/g, "/"),
+                        venue:         document.getElementById("venue").value,
+              };
+        
+                                                                // プレビュー表示
+              const bd   = lastQuote.breakdown;
+              const rows = [
+                        ["交通費（往復）",                            lastQuote.formatted.transportation],
+                        ["日当",                                      lastQuote.formatted.dayAllowance],
+                        ["宿泊費",                                    lastQuote.formatted.accommodation],
+                        ["LCWセットアップ",                           lastQuote.formatted.lcwSetup],
+                        ["消耗品",                                    lastQuote.formatted.consumables],
+                        ["窒素",                                      lastQuote.formatted.nitrogen],
+                        ["パーテーション",                            lastQuote.formatted.partition],
+                        ["保護メガネ・手袋・溶接台",                 lastQuote.formatted.workTable],
+                        ["── 小計",                                  lastQuote.formatted.subtotal],
+                        lastQuote.discount > 0 ? ["値引き", "−" + lastQuote.formatted.discount] : null,
+                        ["消費税（10%）",                             lastQuote.formatted.tax],
+                      ].filter(Boolean);
+        
+                                                                const tbody = document.getElementById("resultBody");
+              tbody.innerHTML = rows.map(([label, amount]) =>
+                        `<tr><td>${label}</td><td class="amount">${amount}</td></tr>`
+                      ).join("");
+        
+                                                                document.getElementById("totalAmount").textContent =
+                                                                          "¥" + lastQuote.formatted.total + "（税込）";
+        
+                                                                document.getElementById("resultSection").style.display = "block";
+              document.getElementById("excelBtn").style.display      = "inline-block";
+              document.getElementById("resultSection").scrollIntoView({ behavior: "smooth" });
+      });
+  
+      // ---- Excelダウンロードボタン ----
+      document.getElementById("excelBtn").addEventListener("click", function () {
+              if (!lastQuote) { alert("先に計算してください"); return; }
+              exportQuoteToExcel(lastQuote, lastMeta);
+      });
+  </script>
+</body>
+</html>html></span></th></th></tr>
+                      </thead></label></label></h2></h1>
+</body></title>
+</head><!DOCTYPE html>\n<html lang="en">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>Quote Generation</title>\n    <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n    <h1>Quote Generation Form</h1>\n    <form id="quoteForm">\n        <label for="name">Name:</label>\n        <input type="text" id="name" name="name" required>\n        <br>\n        <label for="email">Email:</label>\n        <input type="email" id="email" name="email" required>\n        <br>\n        <label for="description">Description:</label>\n        <textarea id="description" name="description" required></textarea>\n        <br>\n        <button type="submit">Get Quote</button>\n    </form>\n    <script src="script.js"></script>\n</body>\n</html>
