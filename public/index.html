@@ -150,9 +150,9 @@
       const quote = new QuoteCalculator(params).getQuote();
       const tbody = document.getElementById('resultBody');
       tbody.innerHTML = '';
-      quote.items.forEach(item => {
+      Object.values(quote.breakdown).filter(i=>i&&i.amount>0).forEach(item => {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + item.name + '</td><td>' + item.unitPrice.toLocaleString() + '</td><td>' + item.qty + '</td><td>' + item.amount.toLocaleString() + '</td>';
+        tr.innerHTML = '<td>' + Object.valuesitem.label + '</td><td colspan="2"></td><td>' + item.amount.toLocaleString()(quote.breakdown).filter(i=>i&&i.amount>0).forEach + '</td>';
         tbody.appendChild(tr);
       });
       document.getElementById('subtotal').textContent = quote.subtotal.toLocaleString();
