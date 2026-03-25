@@ -10,7 +10,7 @@
 <body>
   <div class="container">
     <h1>出張見積もり自動作成</h1>
-    <p class="subtitle">サンマックスレーザー / 株式会社リンシュンドウ</p>
+    <p class="subtitle">サンマックスレーザー / 株式会社リンシュンhドウ</p>
     <section class="card">
       <h2>顧客情報</h2>
       <div class="form-row">
@@ -147,7 +147,7 @@
         includeWorkTable: document.getElementById('includeWorkTable').checked,
         discount: parseInt(document.getElementById('discount').value) || 0
       };
-      const quote = QuoteCalculator.getQuote(params);
+      const quote = new QuoteCalculator(params).getQuote();
       const tbody = document.getElementById('resultBody');
       tbody.innerHTML = '';
       quote.items.forEach(item => {
