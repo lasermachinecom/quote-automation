@@ -1,1 +1,65 @@
-{\n  \"pricing_rules\": {\n    \"day_allowance\": {\n      \"weekday\": 50000,\n      \"weekend\": 75000\n    },\n    \"accommodation\": 15000,\n    \"transportation\": {\n      \"cost_per_km\": 150,\n      \"from\": \"Gifu\"\n    },\n    \"lcw_setup\": 20000,\n    \"consumables\": 7500,\n    \"nitrogen\": {\n      \"daily_cost\": 5000\n    },\n    \"equipment\": {\n      \"cost_per_unit\": 5000\n    },\n    \"major_regions\": {\n      \"Tokyo\": 350,\n      \"Osaka\": 600,\n      \"Nagoya\": 200,\n      \"Fukuoka\": 790,\n      \"Hiroshima\": 700,\n      \"Sapporo\": 1100,\n      \"Sendai\": 500\n    }\n  }\n}
+{
+    "pricing_rules": {
+          "day_allowance": {
+                  "weekday": 50000,
+                  "weekend": 75000
+          },
+          "accommodation": {
+                  "per_night": 15000,
+                  "note": "1泊あたり・人数×泊数"
+          },
+          "transportation": {
+                  "cost_per_km": 150,
+                  "from": "Gifu",
+                  "from_address": "岐阜市中川原",
+                  "note": "往復距離×150円/km・社用車使用"
+          },
+          "lcw_setup": {
+                  "cost": 20000,
+                  "note": "LCWデモ機展示設置費（1.5kW相当）"
+          },
+          "consumables": {
+                  "cost": 7500,
+                  "note": "デモ用消耗品費（ワイヤー・試材）"
+          },
+          "nitrogen": {
+                  "daily_cost": 5000,
+                  "note": "窒素使用料（1日あたり）"
+          },
+          "equipment": {
+                  "partition": 5000,
+                  "work_table": 5000,
+                  "note": "パーテーション・保護メガネ・手袋・溶接台など"
+          },
+          "tax_rate": 0.10,
+          "payment_terms": "末締め末現金払い",
+          "quote_validity_days": 30,
+          "major_regions": {
+                  "東京": { "km": 350, "city": "Tokyo" },
+                  "大阪": { "km": 600, "city": "Osaka" },
+                  "名古屋": { "km": 200, "city": "Nagoya" },
+                  "福岡": { "km": 790, "city": "Fukuoka" },
+                  "広島": { "km": 700, "city": "Hiroshima" },
+                  "札幌": { "km": 1100, "city": "Sapporo" },
+                  "仙台": { "km": 500, "city": "Sendai" },
+                  "高崎": { "km": 360, "city": "Takasaki" },
+                  "千葉": { "km": 380, "city": "Chiba" },
+                  "土浦": { "km": 400, "city": "Tsuchiura" },
+                  "岡崎": { "km": 80, "city": "Okazaki" },
+                  "四日市": { "km": 90, "city": "Yokkaichi" },
+                  "函館": { "km": 1200, "city": "Hakodate" },
+                  "行田": { "km": 340, "city": "Gyoda" },
+                  "岐阜": { "km": 0, "city": "Gifu" }
+          },
+          "company_info": {
+                  "name": "株式会社リンシュンドウ / サンマックスレーザー",
+                  "address": "〒502-0013 岐阜市中川原サンマックスビル",
+                  "email": "lasermachine.com@gmail.com",
+                  "bank": "十六銀行 柳ヶ瀬支店",
+                  "account_type": "普通",
+                  "account_number": "0777577",
+                  "account_name": "カ)リンシュンドウ",
+                  "invoice_number": "T6200001005823"
+          }
+    }
+}
