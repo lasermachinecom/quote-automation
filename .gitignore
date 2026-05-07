@@ -1,0 +1,8 @@
+# Personal company memory files (must never be committed)
+CLAUDE.md
+CLAUDE.md.*
+secrets
+secrets.*
+*.secrets
+.env
+.env.*
