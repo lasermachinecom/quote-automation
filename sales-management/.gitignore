@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+data/sales.db
+data/sales.db-journal
+data/attachments/
+data/exports/
+*.log
