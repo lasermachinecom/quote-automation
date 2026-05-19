@@ -469,31 +469,45 @@ class StockTab(ttk.Frame):
         self.refresh()
 
     def _build(self):
-        ttk.Label(self, text="在庫一覧（未出荷の個体）", font=("", 14, "bold")).pack(anchor="w", pady=(0, 8))
+        ttk.Label(self, text="個体一覧（在庫＋出荷済）", font=("", 14, "bold")).pack(anchor="w", pady=(0, 8))
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", pady=4)
         ttk.Button(btns, text="更新", command=self.refresh).pack(side="left")
         ttk.Button(btns, text="在庫CSV書き出し", command=self._export).pack(side="left", padx=6)
-        ttk.Label(btns, text="    機種で絞り込み:").pack(side="left", padx=(20, 4))
+
+        ttk.Label(btns, text="    状態:").pack(side="left", padx=(20, 4))
+        self.status_var = tk.StringVar(value="在庫のみ")
+        cb = ttk.Combobox(btns, textvariable=self.status_var,
+                          values=["在庫のみ", "出荷済のみ", "全部（出荷済はグレー）"],
+                          width=22, state="readonly")
+        cb.pack(side="left")
+        self.status_var.trace_add("write", lambda *_: self.refresh())
+
+        ttk.Label(btns, text="    機種/シリアル:").pack(side="left", padx=(20, 4))
         self.filter_var = tk.StringVar()
         ent = ttk.Entry(btns, textvariable=self.filter_var, width=24)
         ent.pack(side="left")
         ent.bind("<KeyRelease>", lambda e: self.refresh())
 
-        cols = ("serial", "model", "mfg_date", "purchase_date", "vendor", "amount", "memo")
+        cols = ("status", "serial", "model", "mfg_date", "purchase_date",
+                "vendor", "amount", "sale_date", "customer", "memo")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
         for k, t, w, a in [
+            ("status", "状態", 70, "w"),
             ("serial", "シリアルNo.", 110, "w"),
-            ("model", "機種", 220, "w"),
+            ("model", "機種", 200, "w"),
             ("mfg_date", "製造年月日", 100, "w"),
             ("purchase_date", "入荷日", 100, "w"),
-            ("vendor", "仕入先", 200, "w"),
+            ("vendor", "仕入先", 180, "w"),
             ("amount", "入荷金額", 100, "e"),
-            ("memo", "メモ", 260, "w"),
+            ("sale_date", "出荷日", 100, "w"),
+            ("customer", "購入者", 140, "w"),
+            ("memo", "メモ", 220, "w"),
         ]:
             self.tree.heading(k, text=t, command=lambda c=k: self._sort(c))
             self.tree.column(k, width=w, anchor=a)
+        self.tree.tag_configure("sold", foreground="#999999")
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", self._open_detail)
         self._sort_col: str | None = None
@@ -504,15 +518,23 @@ class StockTab(ttk.Frame):
 
     def refresh(self):
         kw = (self.filter_var.get() if hasattr(self, "filter_var") else "").strip()
+        mode = self.status_var.get() if hasattr(self, "status_var") else "在庫のみ"
+
         sql = """
-            SELECT u.id, u.serial_no, u.model, u.mfg_date, u.memo AS unit_memo,
-                   p.purchase_date, p.vendor_name, p.amount
+            SELECT u.id, u.serial_no, u.model, u.mfg_date, u.status,
+                   u.memo AS unit_memo,
+                   p.purchase_date, p.vendor_name, p.amount,
+                   s.sale_date, s.customer_name
             FROM units u
             LEFT JOIN sales s ON s.unit_id = u.id
             LEFT JOIN purchases p ON p.unit_id = u.id
-            WHERE s.id IS NULL AND u.status != '出荷済'
+            WHERE 1=1
         """
         params: list = []
+        if mode == "在庫のみ":
+            sql += " AND s.id IS NULL AND u.status != '出荷済'"
+        elif mode == "出荷済のみ":
+            sql += " AND (s.id IS NOT NULL OR u.status = '出荷済')"
         if kw:
             sql += " AND (u.model LIKE ? OR u.serial_no LIKE ?)"
             like = f"%{kw}%"
@@ -522,22 +544,36 @@ class StockTab(ttk.Frame):
             rows = list(conn.execute(sql, params))
 
         self.tree.delete(*self.tree.get_children())
-        total_amount = 0
+        n_in_stock = 0
+        n_sold = 0
+        total_amount_in_stock = 0
         for r in rows:
             memo = (r["unit_memo"] or "").replace("\n", " / ")
             amt = r["amount"]
+            sold = (r["status"] == "出荷済")
+            tags = ("sold",) if sold else ()
             self.tree.insert("", "end", iid=str(r["id"]), values=(
+                "出荷済" if sold else "在庫",
                 r["serial_no"] or "",
                 r["model"] or "",
                 r["mfg_date"] or "",
                 r["purchase_date"] or "",
                 r["vendor_name"] or "",
                 f"{amt:,}" if amt is not None else "",
+                r["sale_date"] or "",
+                r["customer_name"] or "",
                 memo,
-            ))
-            if amt is not None:
-                total_amount += amt
-        self.total_label.config(text=f"合計: {len(rows)} 台 / 入荷金額計: {total_amount:,} 円")
+            ), tags=tags)
+            if sold:
+                n_sold += 1
+            else:
+                n_in_stock += 1
+                if amt is not None:
+                    total_amount_in_stock += amt
+        self.total_label.config(
+            text=f"合計: {len(rows)} 台  (在庫: {n_in_stock} / 出荷済: {n_sold})  "
+                 f"／ 在庫の入荷金額計: {total_amount_in_stock:,} 円"
+        )
 
     def _open_detail(self, _event):
         sel = self.tree.selection()

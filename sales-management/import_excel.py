@@ -72,6 +72,33 @@ def _unmerge_in_memory(ws) -> None:
                 ws.cell(row=cell.row, column=cell.column).value = value
 
 
+def _is_highlighted(cell) -> bool:
+    """Return True if the cell has any solid fill (yellow / theme color).
+    In the シリアル照合表 the user marks in-stock rows with a yellow fill
+    and removes the fill on shipment; an unfilled cell therefore means
+    'no longer in stock'."""
+    fill = cell.fill
+    if fill is None or fill.patternType is None:
+        return False
+    if fill.patternType != "solid":
+        return False
+    fg = fill.fgColor
+    if fg is None:
+        return False
+    # Treat anything other than pure white as a highlight
+    if fg.type == "rgb":
+        try:
+            rgb = fg.rgb or ""
+        except Exception:
+            rgb = ""
+        if rgb in ("00000000", "", "FFFFFFFF"):
+            return False
+        return True
+    # theme / indexed colors → treat as highlighted (user's workbook
+    # uses theme color 3 for some yellow rows)
+    return True
+
+
 def _s(v):
     if v is None:
         return None
@@ -166,9 +193,14 @@ def import_excel(xlsx_path: Path) -> tuple[int, int]:
             if not model:
                 model = "(機種不明)"
 
+            # Truth source for in-stock vs sold is the yellow highlight on
+            # the serial cell. The 出荷日 column is unreliable for older
+            # rows where the date was never back-filled.
+            serial_cell = ws.cell(row=r, column=COL["serial"])
+            in_stock_by_color = _is_highlighted(serial_cell)
             ship_val = get("ship")
-            shipped = _is_shipped(ship_val)
-            status = "出荷済" if shipped else "在庫"
+            shipped = not in_stock_by_color
+            status = "在庫" if in_stock_by_color else "出荷済"
 
             unit_memo = _join_memo(
                 ("通番", get("seq")),
