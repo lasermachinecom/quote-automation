@@ -880,15 +880,15 @@ class OrderTab(ttk.Frame):
         self.right = ttk.Frame(pw)
         pw.add(self.right, weight=3)
 
-        self._build_form()
-        self._show_form()
-
         bottom = ttk.Frame(self)
-        bottom.pack(fill="x", pady=2)
+        bottom.pack(fill="x", pady=2, side="bottom")
         self.count_label = ttk.Label(bottom, text="0 件")
         self.count_label.pack(side="left")
         self.mode_label = ttk.Label(bottom, text="", foreground="#666")
         self.mode_label.pack(side="right")
+
+        self._build_form()
+        self._show_form()
 
     def _build_form(self):
         self.form_frame = ttk.Frame(self.right)
