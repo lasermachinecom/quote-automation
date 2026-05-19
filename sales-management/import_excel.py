@@ -73,10 +73,10 @@ def _unmerge_in_memory(ws) -> None:
 
 
 def _is_highlighted(cell) -> bool:
-    """Return True if the cell has any solid fill (yellow / theme color).
-    In the シリアル照合表 the user marks in-stock rows with a yellow fill
-    and removes the fill on shipment; an unfilled cell therefore means
-    'no longer in stock'."""
+    """Return True if the cell has a non-white solid fill — i.e. the user
+    has marked it as in-stock (yellow / 資産計上 green / 部品取り etc.).
+    Cells with no fill, or solid fill using the default white background
+    theme, are treated as 'no longer in stock'."""
     fill = cell.fill
     if fill is None or fill.patternType is None:
         return False
@@ -85,18 +85,26 @@ def _is_highlighted(cell) -> bool:
     fg = fill.fgColor
     if fg is None:
         return False
-    # Treat anything other than pure white as a highlight
     if fg.type == "rgb":
         try:
             rgb = fg.rgb or ""
         except Exception:
             rgb = ""
+        # 00000000 = "no color set", FFFFFFFF = explicit white
         if rgb in ("00000000", "", "FFFFFFFF"):
             return False
         return True
-    # theme / indexed colors → treat as highlighted (user's workbook
-    # uses theme color 3 for some yellow rows)
-    return True
+    if fg.type == "theme":
+        # theme 0 = background light 1 (white), theme 1 = text dark 1 (black)
+        # Anything else is an accent / fill color = treat as highlight.
+        try:
+            theme = fg.theme
+        except Exception:
+            theme = None
+        if theme in (0, 1, None):
+            return False
+        return True
+    return False
 
 
 def _s(v):
