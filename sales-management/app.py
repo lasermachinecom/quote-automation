@@ -925,7 +925,16 @@ class OrderTab(ttk.Frame):
     def _new(self):
         import traceback
         try:
-            print("[DEBUG] _new called", flush=True)
+            print("[DEBUG] _new called, scheduling via after()", flush=True)
+            self.after(10, self._do_new)
+        except Exception:
+            traceback.print_exc()
+            messagebox.showerror("デバッグ", traceback.format_exc())
+
+    def _do_new(self):
+        import traceback
+        try:
+            print("[DEBUG] _do_new running", flush=True)
             OrderDialog(self, self.app, on_save=self.refresh)
             print("[DEBUG] OrderDialog created", flush=True)
         except Exception:
