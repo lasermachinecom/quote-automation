@@ -966,7 +966,6 @@ class OrderDialog(tk.Toplevel):
 
     def __init__(self, parent, app, order_id=None, on_save=None):
         super().__init__(app)
-        self.withdraw()  # hide until fully built; avoids "応答なし" on Windows
         self.app = app
         self.order_id = order_id
         self.on_save = on_save
@@ -977,17 +976,8 @@ class OrderDialog(tk.Toplevel):
             self._load(order_id)
         else:
             self.f_odate.set(today())
-        self.update_idletasks()
-        self.deiconify()
         self.lift()
         self.focus_force()
-        self.after(50, self._make_modal)
-
-    def _make_modal(self):
-        try:
-            self.grab_set()
-        except Exception:
-            pass
 
     def _build(self):
         wrap = ttk.Frame(self, padding=10)
@@ -1115,7 +1105,6 @@ class ShipDialog(tk.Toplevel):
 
     def __init__(self, parent, app, order: dict, on_done=None):
         super().__init__(app)
-        self.withdraw()
         self.app = app
         self.order = order
         self.on_done = on_done
@@ -1124,17 +1113,8 @@ class ShipDialog(tk.Toplevel):
         self.geometry("760x520")
         self._build()
         self._refresh_units()
-        self.update_idletasks()
-        self.deiconify()
         self.lift()
         self.focus_force()
-        self.after(50, self._make_modal)
-
-    def _make_modal(self):
-        try:
-            self.grab_set()
-        except Exception:
-            pass
 
     def _build(self):
         wrap = ttk.Frame(self, padding=10)
@@ -1462,7 +1442,6 @@ class DetailDialog(tk.Toplevel):
 
     def __init__(self, parent, app, unit_id: int, on_save=None):
         super().__init__(app)
-        self.withdraw()
         self.app = app
         self.unit_id = unit_id
         self.on_save = on_save
@@ -1470,17 +1449,8 @@ class DetailDialog(tk.Toplevel):
         self.geometry("780x720")
         self._build()
         self._load()
-        self.update_idletasks()
-        self.deiconify()
         self.lift()
         self.focus_force()
-        self.after(50, self._make_modal)
-
-    def _make_modal(self):
-        try:
-            self.grab_set()
-        except Exception:
-            pass
 
     def _build(self):
         nb = ttk.Notebook(self)
