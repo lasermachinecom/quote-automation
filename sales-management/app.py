@@ -965,7 +965,8 @@ class OrderDialog(tk.Toplevel):
     """新規 / 編集 受注フォーム（ポップアップ）"""
 
     def __init__(self, parent, app, order_id=None, on_save=None):
-        super().__init__(parent)
+        super().__init__(app)
+        self.withdraw()  # hide until fully built; avoids "応答なし" on Windows
         self.app = app
         self.order_id = order_id
         self.on_save = on_save
@@ -976,12 +977,17 @@ class OrderDialog(tk.Toplevel):
             self._load(order_id)
         else:
             self.f_odate.set(today())
-        self.transient(parent)
         self.update_idletasks()
+        self.deiconify()
         self.lift()
         self.focus_force()
-        self.wait_visibility()
-        self.grab_set()
+        self.after(50, self._make_modal)
+
+    def _make_modal(self):
+        try:
+            self.grab_set()
+        except Exception:
+            pass
 
     def _build(self):
         wrap = ttk.Frame(self, padding=10)
@@ -1108,7 +1114,8 @@ class ShipDialog(tk.Toplevel):
     """受注を出荷確定するダイアログ：在庫から個体を選んで売上に転記"""
 
     def __init__(self, parent, app, order: dict, on_done=None):
-        super().__init__(parent)
+        super().__init__(app)
+        self.withdraw()
         self.app = app
         self.order = order
         self.on_done = on_done
@@ -1117,12 +1124,17 @@ class ShipDialog(tk.Toplevel):
         self.geometry("760x520")
         self._build()
         self._refresh_units()
-        self.transient(parent)
         self.update_idletasks()
+        self.deiconify()
         self.lift()
         self.focus_force()
-        self.wait_visibility()
-        self.grab_set()
+        self.after(50, self._make_modal)
+
+    def _make_modal(self):
+        try:
+            self.grab_set()
+        except Exception:
+            pass
 
     def _build(self):
         wrap = ttk.Frame(self, padding=10)
@@ -1449,7 +1461,8 @@ class DetailDialog(tk.Toplevel):
     """個体の詳細編集ポップアップ。機体・入荷・出荷・添付の4セクション。"""
 
     def __init__(self, parent, app, unit_id: int, on_save=None):
-        super().__init__(parent)
+        super().__init__(app)
+        self.withdraw()
         self.app = app
         self.unit_id = unit_id
         self.on_save = on_save
@@ -1457,12 +1470,17 @@ class DetailDialog(tk.Toplevel):
         self.geometry("780x720")
         self._build()
         self._load()
-        self.transient(parent)
         self.update_idletasks()
+        self.deiconify()
         self.lift()
         self.focus_force()
-        self.wait_visibility()
-        self.grab_set()
+        self.after(50, self._make_modal)
+
+    def _make_modal(self):
+        try:
+            self.grab_set()
+        except Exception:
+            pass
 
     def _build(self):
         nb = ttk.Notebook(self)
