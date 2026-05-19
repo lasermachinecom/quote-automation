@@ -10,6 +10,7 @@ Usage:
 """
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -80,11 +81,30 @@ def _s(v):
     return s if s else None
 
 
+_DATE_RE = re.compile(r"(\d{4})[./年-](\d{1,2})[./月-](\d{1,2})")
+
+
 def _date_str(v):
-    """Return YYYY-MM-DD if v is a date/datetime, else None."""
+    """Return YYYY-MM-DD if v looks like a date (datetime or text), else None.
+
+    Accepts strings like '2024.12.20', '2024/12/20', '2024-12-20',
+    '2024年12月20日', or text containing a date prefix.
+    """
+    if v is None:
+        return None
     if isinstance(v, datetime):
         return v.strftime("%Y-%m-%d")
-    return None
+    s = str(v).strip()
+    if not s:
+        return None
+    m = _DATE_RE.search(s)
+    if not m:
+        return None
+    y, mo, d = m.groups()
+    try:
+        return datetime(int(y), int(mo), int(d)).strftime("%Y-%m-%d")
+    except ValueError:
+        return None
 
 
 def _i(v):
