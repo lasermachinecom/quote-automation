@@ -136,7 +136,6 @@ def import_excel(xlsx_path: Path) -> tuple[int, int]:
 
             unit_memo = _join_memo(
                 ("通番", get("seq")),
-                ("ロット", get("lot")),
                 ("出力", get("power")),
                 ("コントローラ", get("controller")),
                 ("備考", get("remark")),
@@ -150,14 +149,15 @@ def import_excel(xlsx_path: Path) -> tuple[int, int]:
             )
             unit_id = cur.lastrowid
 
-            # Purchase (入荷) record — only if we have either a date or a price
+            # Purchase (入荷) record — lot column carries vendor info
             arr_date = _date_str(get("arrival"))
             price = _i(get("price"))
-            if arr_date or price:
+            vendor = _s(get("lot"))
+            if arr_date or price or vendor:
                 conn.execute(
-                    """INSERT INTO purchases(unit_id, purchase_date, amount)
-                       VALUES (?, ?, ?)""",
-                    (unit_id, arr_date, price),
+                    """INSERT INTO purchases(unit_id, purchase_date, vendor_name, amount)
+                       VALUES (?, ?, ?, ?)""",
+                    (unit_id, arr_date, vendor, price),
                 )
 
             # Sale (出荷) record — only if shipped

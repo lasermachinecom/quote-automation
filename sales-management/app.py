@@ -488,14 +488,16 @@ class StockTab(ttk.Frame):
             ("model", "機種", 220, "w"),
             ("mfg_date", "製造年月日", 100, "w"),
             ("purchase_date", "入荷日", 100, "w"),
-            ("vendor", "仕入先", 140, "w"),
+            ("vendor", "仕入先", 200, "w"),
             ("amount", "入荷金額", 100, "e"),
-            ("memo", "メモ", 320, "w"),
+            ("memo", "メモ", 260, "w"),
         ]:
-            self.tree.heading(k, text=t)
+            self.tree.heading(k, text=t, command=lambda c=k: self._sort(c))
             self.tree.column(k, width=w, anchor=a)
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", self._open_detail)
+        self._sort_col: str | None = None
+        self._sort_asc = True
 
         self.total_label = ttk.Label(self, text="合計: 0 台", font=("", 11, "bold"))
         self.total_label.pack(anchor="e", pady=6)
@@ -544,6 +546,27 @@ class StockTab(ttk.Frame):
         unit_id = int(sel[0])
         self.app.detail.load(unit_id)
         self.app.nb.select(self.app.detail)
+
+    def _sort(self, col):
+        if self._sort_col == col:
+            self._sort_asc = not self._sort_asc
+        else:
+            self._sort_col = col
+            self._sort_asc = True
+        items = [(self.tree.set(k, col), k) for k in self.tree.get_children("")]
+
+        def keyfn(v):
+            s = str(v).replace(",", "").strip()
+            if not s:
+                return (1, "")
+            try:
+                return (0, float(s))
+            except ValueError:
+                return (0, s)
+
+        items.sort(key=lambda x: keyfn(x[0]), reverse=not self._sort_asc)
+        for i, (_, k) in enumerate(items):
+            self.tree.move(k, "", i)
 
     def _export(self):
         dest = export_stock()
