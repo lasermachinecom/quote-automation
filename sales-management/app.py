@@ -825,59 +825,208 @@ class DetailTab(ttk.Frame):
 
 
 # ------------------------------------------------------------------
-# Tab 7: 受注
+# Tab 2: 受注 — inline form (no popup dialogs to avoid Tk hang)
 # ------------------------------------------------------------------
 
 class OrderTab(ttk.Frame):
+    """受注タブ：一覧 + インライン編集フォーム + 出荷確定（全部1画面内）"""
+
     def __init__(self, master, app):
-        super().__init__(master, padding=12)
+        super().__init__(master, padding=10)
         self.app = app
+        self.selected_order_id = None
+        self.mode = "form"   # "form" or "ship"
         self._build()
         self.refresh()
 
+    # --------------- layout ---------------
+
     def _build(self):
-        ttk.Label(self, text="受注管理", font=("", 14, "bold")).pack(anchor="w", pady=(0, 8))
+        ttk.Label(self, text="受注管理", font=("", 14, "bold")).pack(anchor="w", pady=(0, 6))
 
         top = ttk.Frame(self)
-        top.pack(fill="x", pady=4)
+        top.pack(fill="x")
         ttk.Label(top, text="状態:").pack(side="left")
         self.status_filter = tk.StringVar(value="(全部)")
-        cb = ttk.Combobox(top, textvariable=self.status_filter,
-                          values=["(全部)"] + ORDER_STATUSES, width=10, state="readonly")
-        cb.pack(side="left", padx=4)
+        ttk.Combobox(top, textvariable=self.status_filter,
+                     values=["(全部)"] + ORDER_STATUSES, width=10, state="readonly").pack(side="left", padx=4)
         self.status_filter.trace_add("write", lambda *_: self.refresh())
 
         ttk.Label(top, text="絞り込み:").pack(side="left", padx=(10, 4))
         self.q_var = tk.StringVar()
         self.q_var.trace_add("write", lambda *_: self.refresh())
-        ttk.Entry(top, textvariable=self.q_var, width=24).pack(side="left")
+        ttk.Entry(top, textvariable=self.q_var, width=22).pack(side="left")
 
-        ttk.Button(top, text="＋ 新規受注", command=self._new).pack(side="left", padx=(20, 4))
-        ttk.Button(top, text="編集", command=self._edit).pack(side="left", padx=2)
-        ttk.Button(top, text="削除", command=self._delete).pack(side="left", padx=2)
-        ttk.Button(top, text="📦 出荷確定", command=self._ship).pack(side="left", padx=(20, 4))
+        ttk.Button(top, text="削除", command=self._delete).pack(side="right", padx=2)
 
-        cols = ("status", "order_date", "customer", "model", "total",
-                "payment", "invoice", "desired", "assigned")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
-        for k, t, w, a in [
-            ("status", "状態", 70, "w"),
-            ("order_date", "受注日", 90, "w"),
-            ("customer", "お客様", 180, "w"),
-            ("model", "受注機種", 200, "w"),
-            ("total", "合計金額", 100, "e"),
-            ("payment", "入金", 70, "w"),
-            ("invoice", "請求書#", 100, "w"),
-            ("desired", "希望出荷日", 90, "w"),
-            ("assigned", "割当シリアル", 110, "w"),
-        ]:
+        pw = ttk.PanedWindow(self, orient="horizontal")
+        pw.pack(fill="both", expand=True, pady=6)
+
+        # Left: order list
+        left = ttk.Frame(pw)
+        pw.add(left, weight=2)
+        cols = ("status", "date", "customer", "model", "total", "pay", "assigned")
+        self.tree = ttk.Treeview(left, columns=cols, show="headings", height=20)
+        for k, t, w in [("status", "状態", 60), ("date", "受注日", 80),
+                        ("customer", "お客様", 140), ("model", "受注機種", 160),
+                        ("total", "金額", 90), ("pay", "入金", 60),
+                        ("assigned", "割当S/N", 100)]:
             self.tree.heading(k, text=t)
-            self.tree.column(k, width=w, anchor=a)
-        self.tree.pack(fill="both", expand=True, pady=4)
-        self.tree.bind("<Double-1>", lambda _e: self._edit())
+            self.tree.column(k, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
-        self.count_label = ttk.Label(self, text="0 件")
-        self.count_label.pack(anchor="w", pady=2)
+        # Right: form / ship area
+        self.right = ttk.Frame(pw)
+        pw.add(self.right, weight=3)
+
+        self._build_form()
+        self._show_form()
+
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", pady=2)
+        self.count_label = ttk.Label(bottom, text="0 件")
+        self.count_label.pack(side="left")
+        self.mode_label = ttk.Label(bottom, text="", foreground="#666")
+        self.mode_label.pack(side="right")
+
+    def _build_form(self):
+        self.form_frame = ttk.Frame(self.right)
+
+        # Header buttons (always visible)
+        head = ttk.Frame(self.form_frame)
+        head.pack(fill="x", pady=(0, 4))
+        ttk.Button(head, text="＋ 新規受注", command=self._new).pack(side="left", padx=2)
+        ttk.Button(head, text="保存", command=self._save).pack(side="left", padx=2)
+        ttk.Button(head, text="クリア", command=self._clear).pack(side="left", padx=2)
+        ttk.Button(head, text="📦 出荷確定 →", command=self._show_ship).pack(side="right", padx=2)
+
+        # Scrollable area for form fields
+        canvas = tk.Canvas(self.form_frame, highlightthickness=0, borderwidth=0)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(self.form_frame, orient="vertical", command=canvas.yview)
+        sb.pack(side="right", fill="y")
+        canvas.configure(yscrollcommand=sb.set)
+        inner = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        f1 = ttk.LabelFrame(inner, text="受注基本")
+        f1.pack(fill="x", pady=4)
+        self.f_odate = LabeledEntry(f1, "受注日")
+        self.f_status = LabeledCombo(f1, "状態", ORDER_STATUSES)
+        self.f_method = LabeledCombo(f1, "販売方法", SALE_METHODS)
+        self.f_model = LabeledEntry(f1, "受注機種")
+        for w in (self.f_odate, self.f_status, self.f_method, self.f_model):
+            w.pack(fill="x", pady=2, padx=6)
+
+        f2 = ttk.LabelFrame(inner, text="お客様")
+        f2.pack(fill="x", pady=4)
+        self.f_cust = LabeledEntry(f2, "お客様名")
+        self.f_company = LabeledEntry(f2, "会社/発注番号")
+        self.f_postal = LabeledEntry(f2, "郵便番号")
+        self.f_addr = LabeledEntry(f2, "住所", width=40)
+        self.f_phone = LabeledEntry(f2, "電話番号")
+        self.f_email = LabeledEntry(f2, "メール")
+        self.f_yid = LabeledEntry(f2, "Yahoo ID")
+        for w in (self.f_cust, self.f_company, self.f_postal, self.f_addr,
+                  self.f_phone, self.f_email, self.f_yid):
+            w.pack(fill="x", pady=2, padx=6)
+
+        f3 = ttk.LabelFrame(inner, text="金額・入金・出荷予定")
+        f3.pack(fill="x", pady=4)
+        self.f_invoice = LabeledEntry(f3, "請求書番号")
+        self.f_total = LabeledEntry(f3, "合計金額")
+        self.f_freight = LabeledEntry(f3, "送料")
+        self.f_pay = LabeledCombo(f3, "入金状態", PAYMENT_STATUSES)
+        self.f_paydate = LabeledEntry(f3, "入金日")
+        self.f_dship = LabeledEntry(f3, "希望出荷日")
+        self.f_insp = LabeledCombo(f3, "検品状態", INSPECTION_STATUSES)
+        for w in (self.f_invoice, self.f_total, self.f_freight, self.f_pay,
+                  self.f_paydate, self.f_dship, self.f_insp):
+            w.pack(fill="x", pady=2, padx=6)
+
+        self.f_memo = LabeledEntry(inner, "メモ", width=50)
+        self.f_memo.pack(fill="x", pady=6)
+
+    def _build_ship(self):
+        # destroyed and rebuilt each time
+        if hasattr(self, "ship_frame") and self.ship_frame.winfo_exists():
+            self.ship_frame.destroy()
+        self.ship_frame = ttk.Frame(self.right)
+
+        head = ttk.Frame(self.ship_frame)
+        head.pack(fill="x", pady=(0, 4))
+        ttk.Label(head, text=f"出荷確定 受注#{self.selected_order_id}",
+                  font=("", 12, "bold")).pack(side="left")
+        ttk.Button(head, text="← 戻る", command=self._show_form).pack(side="right", padx=2)
+        ttk.Button(head, text="✓ 出荷確定", command=self._confirm_ship).pack(side="right", padx=2)
+
+        info = ttk.LabelFrame(self.ship_frame, text="受注内容")
+        info.pack(fill="x", pady=4)
+        with connect() as conn:
+            o = conn.execute("SELECT * FROM orders WHERE id=?",
+                             (self.selected_order_id,)).fetchone()
+        if o:
+            ttk.Label(info, text=(
+                f"お客様: {o['customer_name'] or ''}  会社: {o['customer_company'] or ''}\n"
+                f"受注機種: {o['model_requested'] or ''}  "
+                f"合計: {o['total_amount'] or ''}  入金: {o['payment_status'] or ''}"
+            ), justify="left").pack(anchor="w", padx=6, pady=4)
+
+        filt = ttk.Frame(self.ship_frame)
+        filt.pack(fill="x", pady=4)
+        ttk.Label(filt, text="在庫から個体を選択 — 絞り込み:").pack(side="left")
+        self.ship_q = tk.StringVar(value=(o["model_requested"] if o else ""))
+        self.ship_q.trace_add("write", lambda *_: self._refresh_ship_units())
+        ttk.Entry(filt, textvariable=self.ship_q, width=24).pack(side="left", padx=4)
+
+        self.ship_tree = ttk.Treeview(self.ship_frame,
+            columns=("serial", "model", "mfg", "purchase"),
+            show="headings", height=15)
+        for k, t, w in [("serial", "シリアル", 110),
+                        ("model", "機種", 200),
+                        ("mfg", "製造日", 90),
+                        ("purchase", "入荷日", 90)]:
+            self.ship_tree.heading(k, text=t)
+            self.ship_tree.column(k, width=w, anchor="w")
+        self.ship_tree.pack(fill="both", expand=True, pady=4)
+
+        date_row = ttk.Frame(self.ship_frame)
+        date_row.pack(fill="x", pady=4)
+        self.f_ddate = LabeledEntry(date_row, "実出荷日")
+        self.f_ddate.set(today())
+        self.f_ddate.pack(side="left")
+
+        self._refresh_ship_units()
+
+    def _show_form(self):
+        if hasattr(self, "ship_frame") and self.ship_frame.winfo_exists():
+            self.ship_frame.pack_forget()
+        self.form_frame.pack(fill="both", expand=True)
+        self.mode = "form"
+        self.mode_label.config(text="編集モード")
+
+    def _show_ship(self):
+        if not self.selected_order_id:
+            messagebox.showinfo("情報", "出荷確定する受注を一覧から選択してください")
+            return
+        with connect() as conn:
+            o = conn.execute("SELECT * FROM orders WHERE id=?",
+                             (self.selected_order_id,)).fetchone()
+        if not o:
+            return
+        if o["status"] == "出荷済":
+            messagebox.showinfo("情報", "この受注は既に出荷済みです")
+            return
+        self.form_frame.pack_forget()
+        self._build_ship()
+        self.ship_frame.pack(fill="both", expand=True)
+        self.mode = "ship"
+        self.mode_label.config(text="出荷確定モード")
+
+    # --------------- data ---------------
 
     def refresh(self):
         sql = """
@@ -887,11 +1036,11 @@ class OrderTab(ttk.Frame):
             WHERE 1=1
         """
         params: list = []
-        st = self.status_filter.get()
+        st = self.status_filter.get() if hasattr(self, "status_filter") else "(全部)"
         if st and st != "(全部)":
             sql += " AND o.status = ?"
             params.append(st)
-        kw = self.q_var.get().strip()
+        kw = self.q_var.get().strip() if hasattr(self, "q_var") else ""
         if kw:
             sql += (" AND (o.customer_name LIKE ? OR o.customer_company LIKE ?"
                     " OR o.model_requested LIKE ? OR o.invoice_no LIKE ?)")
@@ -912,173 +1061,19 @@ class OrderTab(ttk.Frame):
                 r["model_requested"] or "",
                 f"{total:,}" if total is not None else "",
                 r["payment_status"] or "",
-                r["invoice_no"] or "",
-                r["desired_ship_date"] or "",
                 r["assigned_serial"] or "",
             ))
         self.count_label.config(text=f"{len(rows)} 件")
 
-    def _selected_id(self):
+    def _on_select(self, _evt=None):
         sel = self.tree.selection()
-        return int(sel[0]) if sel else None
-
-    def _new(self):
-        import traceback
-        try:
-            print("[DEBUG] _new called, scheduling via after()", flush=True)
-            self.after(10, self._do_new)
-        except Exception:
-            traceback.print_exc()
-            messagebox.showerror("デバッグ", traceback.format_exc())
-
-    def _do_new(self):
-        import traceback
-        try:
-            print("[DEBUG] _do_new running", flush=True)
-            OrderDialog(self, self.app, on_save=self.refresh)
-            print("[DEBUG] OrderDialog created", flush=True)
-        except Exception:
-            traceback.print_exc()
-            messagebox.showerror("デバッグ", traceback.format_exc())
-
-    def _edit(self):
-        oid = self._selected_id()
-        if not oid:
-            messagebox.showinfo("情報", "編集する受注を選択してください")
+        if not sel:
             return
-        import traceback
-        try:
-            OrderDialog(self, self.app, order_id=oid, on_save=self.refresh)
-        except Exception:
-            traceback.print_exc()
-            messagebox.showerror("デバッグ", traceback.format_exc())
-
-    def _delete(self):
-        oid = self._selected_id()
-        if not oid:
-            return
-        if not messagebox.askyesno("確認", f"受注 #{oid} を削除しますか？"):
-            return
+        self.selected_order_id = int(sel[0])
         with connect() as conn:
-            conn.execute("DELETE FROM orders WHERE id=?", (oid,))
-        self.refresh()
-
-    def _ship(self):
-        oid = self._selected_id()
-        if not oid:
-            messagebox.showinfo("情報", "出荷確定する受注を選択してください")
-            return
-        with connect() as conn:
-            o = conn.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+            o = conn.execute("SELECT * FROM orders WHERE id=?",
+                             (self.selected_order_id,)).fetchone()
         if not o:
-            return
-        if o["status"] == "出荷済":
-            messagebox.showinfo("情報", "この受注は既に出荷済みです")
-            return
-        ShipDialog(self, self.app, order=dict(o), on_done=self._on_shipped)
-
-    def _on_shipped(self):
-        self.refresh()
-        self.app.refresh_all()
-
-
-class OrderDialog(tk.Toplevel):
-    """新規 / 編集 受注フォーム（ポップアップ）"""
-
-    def __init__(self, parent, app, order_id=None, on_save=None):
-        print(f"[DEBUG] OrderDialog.__init__ start", flush=True)
-        super().__init__()  # no parent — avoids Toplevel(app) hang on some Tk builds
-        print(f"[DEBUG] Toplevel super().__init__ done", flush=True)
-        self.app = app
-        self.order_id = order_id
-        self.on_save = on_save
-        self.title(f"受注 編集 #{order_id}" if order_id else "受注 新規登録")
-        print(f"[DEBUG] title set", flush=True)
-        try:
-            px = app.winfo_rootx()
-            py = app.winfo_rooty()
-        except Exception:
-            px = py = 100
-        self.geometry(f"680x640+{px + 60}+{py + 60}")
-        print(f"[DEBUG] geometry set", flush=True)
-        self._build()
-        print(f"[DEBUG] _build done", flush=True)
-        if order_id:
-            self._load(order_id)
-        else:
-            self.f_odate.set(today())
-        print(f"[DEBUG] today set", flush=True)
-        self.lift()
-        print(f"[DEBUG] lift done", flush=True)
-        self.focus_force()
-        print(f"[DEBUG] focus_force done", flush=True)
-        self.attributes("-topmost", True)
-        print(f"[DEBUG] topmost set", flush=True)
-        self.after(200, lambda: self.attributes("-topmost", False))
-        print(f"[DEBUG] OrderDialog.__init__ end", flush=True)
-
-    def _build(self):
-        print(f"[DEBUG] _build start", flush=True)
-        wrap = ttk.Frame(self, padding=10)
-        wrap.pack(fill="both", expand=True)
-        print(f"[DEBUG] wrap created", flush=True)
-
-        f1 = ttk.LabelFrame(wrap, text="受注基本")
-        f1.pack(fill="x", pady=4)
-        self.f_odate = LabeledEntry(f1, "受注日")
-        print(f"[DEBUG] f_odate created", flush=True)
-        self.f_status = LabeledCombo(f1, "状態", ORDER_STATUSES)
-        print(f"[DEBUG] f_status created", flush=True)
-        self.f_status.set("受注")
-        print(f"[DEBUG] f_status.set done", flush=True)
-        self.f_method = LabeledCombo(f1, "販売方法", SALE_METHODS)
-        print(f"[DEBUG] f_method created", flush=True)
-        self.f_model = LabeledEntry(f1, "受注機種")
-        for w in (self.f_odate, self.f_status, self.f_method, self.f_model):
-            w.pack(fill="x", pady=2, padx=6)
-
-        f2 = ttk.LabelFrame(wrap, text="お客様")
-        f2.pack(fill="x", pady=4)
-        self.f_cust = LabeledEntry(f2, "お客様名")
-        self.f_company = LabeledEntry(f2, "会社名/発注番号")
-        self.f_postal = LabeledEntry(f2, "郵便番号")
-        self.f_addr = LabeledEntry(f2, "住所", width=46)
-        self.f_phone = LabeledEntry(f2, "電話番号")
-        self.f_email = LabeledEntry(f2, "メール")
-        self.f_yid = LabeledEntry(f2, "Yahoo ID")
-        for w in (self.f_cust, self.f_company, self.f_postal, self.f_addr,
-                  self.f_phone, self.f_email, self.f_yid):
-            w.pack(fill="x", pady=2, padx=6)
-
-        f3 = ttk.LabelFrame(wrap, text="金額・入金・出荷予定")
-        f3.pack(fill="x", pady=4)
-        self.f_invoice = LabeledEntry(f3, "請求書番号")
-        self.f_total = LabeledEntry(f3, "合計金額")
-        self.f_freight = LabeledEntry(f3, "送料")
-        self.f_pay = LabeledCombo(f3, "入金状態", PAYMENT_STATUSES)
-        self.f_pay.set("未入金")
-        self.f_paydate = LabeledEntry(f3, "入金日")
-        self.f_dship = LabeledEntry(f3, "希望出荷日")
-        self.f_insp = LabeledCombo(f3, "検品状態", INSPECTION_STATUSES)
-        self.f_insp.set("未検品")
-        for w in (self.f_invoice, self.f_total, self.f_freight, self.f_pay,
-                  self.f_paydate, self.f_dship, self.f_insp):
-            w.pack(fill="x", pady=2, padx=6)
-
-        self.f_memo = LabeledEntry(wrap, "メモ", width=60)
-        self.f_memo.pack(fill="x", pady=6)
-
-        btn = ttk.Frame(wrap)
-        btn.pack(fill="x", pady=10)
-        ttk.Button(btn, text="保存", command=self._save).pack(side="right", padx=4)
-        ttk.Button(btn, text="キャンセル", command=self.destroy).pack(side="right", padx=4)
-
-    def _load(self, oid):
-        with connect() as conn:
-            o = conn.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
-        if not o:
-            messagebox.showerror("エラー", "受注が見つかりません")
-            self.destroy()
             return
         self.f_odate.set(o["order_date"] or "")
         self.f_status.set(o["status"] or "受注")
@@ -1099,14 +1094,36 @@ class OrderDialog(tk.Toplevel):
         self.f_dship.set(o["desired_ship_date"] or "")
         self.f_insp.set(o["inspection_status"] or "未検品")
         self.f_memo.set(o["memo"] or "")
+        self.mode_label.config(text=f"編集モード: 受注 #{self.selected_order_id}")
+
+    def _new(self):
+        self.selected_order_id = None
+        try:
+            self.tree.selection_remove(*self.tree.selection())
+        except Exception:
+            pass
+        self._clear()
+        self.mode_label.config(text="編集モード: 新規")
+
+    def _clear(self):
+        for w in (self.f_odate, self.f_status, self.f_method, self.f_model,
+                  self.f_cust, self.f_company, self.f_postal, self.f_addr,
+                  self.f_phone, self.f_email, self.f_yid,
+                  self.f_invoice, self.f_total, self.f_freight,
+                  self.f_pay, self.f_paydate, self.f_dship, self.f_insp,
+                  self.f_memo):
+            w.set("")
+        self.f_odate.set(today())
+        self.f_status.set("受注")
+        self.f_pay.set("未入金")
+        self.f_insp.set("未検品")
 
     def _save(self):
         cust = self.f_cust.get()
         model = self.f_model.get()
         if not cust and not model:
-            messagebox.showwarning("入力エラー", "お客様名 または 受注機種 は必須です")
+            messagebox.showwarning("入力エラー", "お客様名または受注機種は必須です")
             return
-
         values = {
             "order_date": self.f_odate.get() or None,
             "customer_name": cust or None,
@@ -1128,91 +1145,43 @@ class OrderDialog(tk.Toplevel):
             "status": self.f_status.get() or "受注",
             "memo": self.f_memo.get() or None,
         }
-        with connect() as conn:
-            if self.order_id:
-                sets = ", ".join(f"{k}=?" for k in values)
-                conn.execute(
-                    f"UPDATE orders SET {sets}, updated_at=datetime('now','localtime') WHERE id=?",
-                    list(values.values()) + [self.order_id],
-                )
-            else:
-                cols = ", ".join(values.keys())
-                ph = ", ".join(["?"] * len(values))
-                conn.execute(f"INSERT INTO orders({cols}) VALUES ({ph})", list(values.values()))
-        if self.on_save:
-            self.on_save()
-        self.destroy()
-
-
-class ShipDialog(tk.Toplevel):
-    """受注を出荷確定するダイアログ：在庫から個体を選んで売上に転記"""
-
-    def __init__(self, parent, app, order: dict, on_done=None):
-        super().__init__(app)
-        self.app = app
-        self.order = order
-        self.on_done = on_done
-        self.selected_unit_id = None
-        self.title(f"出荷確定（受注 #{order['id']}）")
         try:
-            px = app.winfo_rootx()
-            py = app.winfo_rooty()
-        except Exception:
-            px = py = 100
-        self.geometry(f"760x520+{px + 60}+{py + 60}")
-        self._build()
-        self._refresh_units()
-        self.lift()
-        self.focus_force()
-        self.attributes("-topmost", True)
-        self.after(200, lambda: self.attributes("-topmost", False))
+            with connect() as conn:
+                if self.selected_order_id:
+                    sets = ", ".join(f"{k}=?" for k in values)
+                    conn.execute(
+                        f"UPDATE orders SET {sets}, updated_at=datetime('now','localtime') WHERE id=?",
+                        list(values.values()) + [self.selected_order_id],
+                    )
+                else:
+                    cols = ", ".join(values.keys())
+                    ph = ", ".join(["?"] * len(values))
+                    cur = conn.execute(
+                        f"INSERT INTO orders({cols}) VALUES ({ph})",
+                        list(values.values()),
+                    )
+                    self.selected_order_id = cur.lastrowid
+        except Exception as e:
+            messagebox.showerror("エラー", f"保存失敗: {e}")
+            return
+        self.refresh()
+        self.mode_label.config(text=f"保存しました: 受注 #{self.selected_order_id}")
 
-    def _build(self):
-        wrap = ttk.Frame(self, padding=10)
-        wrap.pack(fill="both", expand=True)
+    def _delete(self):
+        if not self.selected_order_id:
+            return
+        if not messagebox.askyesno("確認",
+                                    f"受注 #{self.selected_order_id} を削除しますか？"):
+            return
+        with connect() as conn:
+            conn.execute("DELETE FROM orders WHERE id=?", (self.selected_order_id,))
+        self._new()
+        self.refresh()
 
-        info = ttk.LabelFrame(wrap, text="受注内容")
-        info.pack(fill="x", pady=4)
-        ttk.Label(info, text=(
-            f"お客様: {self.order.get('customer_name') or ''}    "
-            f"会社: {self.order.get('customer_company') or ''}\n"
-            f"受注機種: {self.order.get('model_requested') or ''}    "
-            f"合計: {self.order.get('total_amount') or ''}    "
-            f"入金: {self.order.get('payment_status') or ''}"
-        ), justify="left").pack(anchor="w", padx=6, pady=4)
+    # --------------- ship confirm ---------------
 
-        sel = ttk.LabelFrame(wrap, text="在庫から個体を選択（シリアル割当）")
-        sel.pack(fill="both", expand=True, pady=4)
-
-        filt = ttk.Frame(sel)
-        filt.pack(fill="x", padx=4, pady=4)
-        ttk.Label(filt, text="絞り込み:").pack(side="left")
-        self.q_var = tk.StringVar(value=self.order.get("model_requested") or "")
-        self.q_var.trace_add("write", lambda *_: self._refresh_units())
-        ttk.Entry(filt, textvariable=self.q_var, width=30).pack(side="left", padx=4)
-
-        self.tree = ttk.Treeview(sel, columns=("serial", "model", "mfg", "purchase"),
-                                 show="headings", height=12)
-        for k, t, w, a in [("serial", "シリアル", 120, "w"),
-                            ("model", "機種", 240, "w"),
-                            ("mfg", "製造日", 100, "w"),
-                            ("purchase", "入荷日", 100, "w")]:
-            self.tree.heading(k, text=t)
-            self.tree.column(k, width=w, anchor=a)
-        self.tree.pack(fill="both", expand=True, padx=4, pady=4)
-        self.tree.bind("<<TreeviewSelect>>", self._on_select)
-
-        bottom = ttk.Frame(wrap)
-        bottom.pack(fill="x", pady=8)
-        self.f_ddate = LabeledEntry(bottom, "実出荷日")
-        self.f_ddate.set(today())
-        self.f_ddate.pack(side="left")
-
-        ttk.Button(bottom, text="✓ 出荷確定", command=self._confirm).pack(side="right", padx=4)
-        ttk.Button(bottom, text="キャンセル", command=self.destroy).pack(side="right", padx=4)
-
-    def _refresh_units(self):
-        kw = self.q_var.get().strip().lower()
+    def _refresh_ship_units(self):
+        kw = self.ship_q.get().strip().lower() if hasattr(self, "ship_q") else ""
         with connect() as conn:
             rows = conn.execute("""
                 SELECT u.id, u.serial_no, u.model, u.mfg_date, p.purchase_date
@@ -1222,37 +1191,38 @@ class ShipDialog(tk.Toplevel):
                 WHERE s.id IS NULL AND u.status = '在庫'
                 ORDER BY u.model, u.id
             """).fetchall()
-        self.tree.delete(*self.tree.get_children())
+        self.ship_tree.delete(*self.ship_tree.get_children())
         for r in rows:
             txt = f"{r['model'] or ''} {r['serial_no'] or ''}".lower()
             if kw and kw not in txt:
                 continue
-            self.tree.insert("", "end", iid=str(r["id"]), values=(
+            self.ship_tree.insert("", "end", iid=str(r["id"]), values=(
                 r["serial_no"] or "",
                 r["model"] or "",
                 r["mfg_date"] or "",
                 r["purchase_date"] or "",
             ))
 
-    def _on_select(self, _evt=None):
-        sel = self.tree.selection()
-        self.selected_unit_id = int(sel[0]) if sel else None
-
-    def _confirm(self):
-        if not self.selected_unit_id:
+    def _confirm_ship(self):
+        sel = self.ship_tree.selection()
+        if not sel:
             messagebox.showwarning("選択エラー", "在庫から個体を選択してください")
             return
+        unit_id = int(sel[0])
+        oid = self.selected_order_id
         ddate = self.f_ddate.get() or today()
-        o = self.order
         try:
             with connect() as conn:
+                o = dict(conn.execute(
+                    "SELECT * FROM orders WHERE id=?", (oid,)
+                ).fetchone())
                 cur = conn.execute(
                     """INSERT INTO sales(unit_id, sale_date, delivery_date,
-                        customer_name, customer_company, postal, address, phone, email, yahoo_id,
-                        sale_method, invoice_no, freight, total_amount,
-                        payment_status, payment_date, memo)
+                        customer_name, customer_company, postal, address,
+                        phone, email, yahoo_id, sale_method, invoice_no,
+                        freight, total_amount, payment_status, payment_date, memo)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (self.selected_unit_id, o.get("order_date"), ddate,
+                    (unit_id, o.get("order_date"), ddate,
                      o.get("customer_name"), o.get("customer_company"),
                      o.get("postal"), o.get("address"), o.get("phone"),
                      o.get("email"), o.get("yahoo_id"),
@@ -1264,22 +1234,21 @@ class ShipDialog(tk.Toplevel):
                 sale_id = cur.lastrowid
                 conn.execute(
                     "UPDATE units SET status='出荷済', updated_at=datetime('now','localtime') WHERE id=?",
-                    (self.selected_unit_id,),
+                    (unit_id,),
                 )
                 conn.execute(
-                    """UPDATE orders
-                       SET status='出荷済', assigned_unit_id=?, sale_id=?,
-                           updated_at=datetime('now','localtime')
-                       WHERE id=?""",
-                    (self.selected_unit_id, sale_id, o["id"]),
+                    """UPDATE orders SET status='出荷済',
+                       assigned_unit_id=?, sale_id=?,
+                       updated_at=datetime('now','localtime') WHERE id=?""",
+                    (unit_id, sale_id, oid),
                 )
         except Exception as e:
-            messagebox.showerror("エラー", f"出荷確定に失敗しました: {e}")
+            messagebox.showerror("エラー", f"出荷確定失敗: {e}")
             return
         messagebox.showinfo("完了", "出荷確定しました。売上に計上されました。")
-        if self.on_done:
-            self.on_done()
-        self.destroy()
+        self._show_form()
+        self.refresh()
+        self.app.refresh_all()
 
 
 # ------------------------------------------------------------------
@@ -1425,7 +1394,44 @@ class MasterTab(ttk.Frame):
         sel = self.tree.selection()
         if not sel:
             return
-        DetailDialog(self, self.app, unit_id=int(sel[0]), on_save=self._after_save)
+        unit_id = int(sel[0])
+        with connect() as conn:
+            u = conn.execute("SELECT * FROM units WHERE id=?", (unit_id,)).fetchone()
+            p = conn.execute("SELECT * FROM purchases WHERE unit_id=?", (unit_id,)).fetchone()
+            s = conn.execute("SELECT * FROM sales WHERE unit_id=?", (unit_id,)).fetchone()
+        if not u:
+            return
+        lines = [
+            f"=== 個体 #{u['id']} ===",
+            f"機種:       {u['model']}",
+            f"シリアル:   {u['serial_no'] or '(なし)'}",
+            f"製造年月日: {u['mfg_date'] or ''}",
+            f"状態:       {u['status']}",
+            f"機体メモ:   {u['memo'] or ''}",
+            "",
+            "--- 入荷 ---",
+        ]
+        if p:
+            lines += [
+                f"入荷日:     {p['purchase_date'] or ''}",
+                f"仕入先:     {p['vendor_name'] or ''}",
+                f"仕入金額:   {p['amount'] or ''}",
+            ]
+        else:
+            lines.append("(入荷情報なし)")
+        lines += ["", "--- 出荷 ---"]
+        if s:
+            lines += [
+                f"売上日:     {s['sale_date'] or ''}",
+                f"納品日:     {s['delivery_date'] or ''}",
+                f"お客様:     {s['customer_name'] or ''}",
+                f"住所:       {s['address'] or ''}",
+                f"金額:       {s['total_amount'] or ''}",
+                f"入金:       {s['payment_status'] or ''}",
+            ]
+        else:
+            lines.append("(出荷情報なし)")
+        messagebox.showinfo(f"個体 #{u['id']}", "\n".join(lines))
 
     def _after_save(self):
         self.refresh()
@@ -1911,7 +1917,9 @@ class App(tk.Tk):
         self.orders.refresh()
 
     def show_detail(self, unit_id: int):
-        DetailDialog(self, self, unit_id=unit_id, on_save=self.refresh_all)
+        # popups hang on this Tk build — just delegate to MasterTab's
+        # read-only summary via the master tab.
+        self.nb.select(self.master)
 
 
 def main():
