@@ -1753,9 +1753,33 @@ class ToolsTab(ttk.Frame):
                                          filetypes=[("Excel", "*.xlsx"), ("すべて", "*.*")])
         if not path:
             return
-        if not messagebox.askyesno("確認", "Excelの全行を取り込みます。既存DBに追加されます。実行しますか？"):
-            return
+
+        # Count existing units to detect re-import situation
+        with connect() as conn:
+            n_units = conn.execute("SELECT COUNT(*) FROM units").fetchone()[0]
+            n_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+
+        clear_db = False
+        if n_units > 0:
+            ans = messagebox.askyesnocancel(
+                "既存データの取扱い",
+                f"既に {n_units} 件の個体データがあります（受注 {n_orders} 件）。\n\n"
+                "【はい】 = 既存データを全削除してから取り込む（重複なし、推奨）\n"
+                "【いいえ】 = 既存データに追加（重複の可能性あり）\n"
+                "【キャンセル】 = 取込中止"
+            )
+            if ans is None:
+                return
+            clear_db = bool(ans)
         try:
+            if clear_db:
+                with connect() as conn:
+                    # Order matters: child tables first, then units (FK cascades clean up)
+                    conn.execute("DELETE FROM attachments")
+                    conn.execute("DELETE FROM orders")
+                    conn.execute("DELETE FROM sales")
+                    conn.execute("DELETE FROM purchases")
+                    conn.execute("DELETE FROM units")
             from import_excel import import_excel
             imp, skp = import_excel(Path(path))
         except Exception as e:
