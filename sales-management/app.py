@@ -479,7 +479,7 @@ class StockTab(ttk.Frame):
         ent.pack(side="left")
         ent.bind("<KeyRelease>", lambda e: self.refresh())
 
-        cols = ("serial", "model", "mfg_date", "purchase_date", "vendor", "memo")
+        cols = ("serial", "model", "mfg_date", "purchase_date", "vendor", "amount", "memo")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
         for k, t, w, a in [
             ("serial", "シリアルNo.", 110, "w"),
@@ -487,7 +487,8 @@ class StockTab(ttk.Frame):
             ("mfg_date", "製造年月日", 100, "w"),
             ("purchase_date", "入荷日", 100, "w"),
             ("vendor", "仕入先", 140, "w"),
-            ("memo", "メモ", 380, "w"),
+            ("amount", "入荷金額", 100, "e"),
+            ("memo", "メモ", 320, "w"),
         ]:
             self.tree.heading(k, text=t)
             self.tree.column(k, width=w, anchor=a)
@@ -501,7 +502,7 @@ class StockTab(ttk.Frame):
         kw = (self.filter_var.get() if hasattr(self, "filter_var") else "").strip()
         sql = """
             SELECT u.id, u.serial_no, u.model, u.mfg_date, u.memo AS unit_memo,
-                   p.purchase_date, p.vendor_name
+                   p.purchase_date, p.vendor_name, p.amount
             FROM units u
             LEFT JOIN sales s ON s.unit_id = u.id
             LEFT JOIN purchases p ON p.unit_id = u.id
@@ -517,17 +518,22 @@ class StockTab(ttk.Frame):
             rows = list(conn.execute(sql, params))
 
         self.tree.delete(*self.tree.get_children())
+        total_amount = 0
         for r in rows:
             memo = (r["unit_memo"] or "").replace("\n", " / ")
+            amt = r["amount"]
             self.tree.insert("", "end", iid=str(r["id"]), values=(
                 r["serial_no"] or "",
                 r["model"] or "",
                 r["mfg_date"] or "",
                 r["purchase_date"] or "",
                 r["vendor_name"] or "",
+                f"{amt:,}" if amt is not None else "",
                 memo,
             ))
-        self.total_label.config(text=f"合計: {len(rows)} 台")
+            if amt is not None:
+                total_amount += amt
+        self.total_label.config(text=f"合計: {len(rows)} 台 / 入荷金額計: {total_amount:,} 円")
 
     def _open_detail(self, _event):
         sel = self.tree.selection()
