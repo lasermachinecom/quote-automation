@@ -923,14 +923,26 @@ class OrderTab(ttk.Frame):
         return int(sel[0]) if sel else None
 
     def _new(self):
-        OrderDialog(self, self.app, on_save=self.refresh)
+        import traceback
+        try:
+            print("[DEBUG] _new called", flush=True)
+            OrderDialog(self, self.app, on_save=self.refresh)
+            print("[DEBUG] OrderDialog created", flush=True)
+        except Exception:
+            traceback.print_exc()
+            messagebox.showerror("デバッグ", traceback.format_exc())
 
     def _edit(self):
         oid = self._selected_id()
         if not oid:
             messagebox.showinfo("情報", "編集する受注を選択してください")
             return
-        OrderDialog(self, self.app, order_id=oid, on_save=self.refresh)
+        import traceback
+        try:
+            OrderDialog(self, self.app, order_id=oid, on_save=self.refresh)
+        except Exception:
+            traceback.print_exc()
+            messagebox.showerror("デバッグ", traceback.format_exc())
 
     def _delete(self):
         oid = self._selected_id()
