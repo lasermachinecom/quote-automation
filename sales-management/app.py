@@ -20,7 +20,16 @@ from db import connect, find_units_by_serial, init_db, stock_summary
 from export_csv import export_all_units, export_stock
 
 
-UNIT_STATUSES = ["在庫", "予約済", "出荷済", "保留", "返品"]
+UNIT_STATUSES = ["在庫", "資産", "部品取り", "予約済", "出荷済", "保留", "返品"]
+STATUS_COLORS = {
+    "在庫":   "#fff7b0",   # yellow
+    "資産":   "#c8efc1",   # green
+    "部品取り": "#cfe6f5",   # light blue
+    "出荷済": "#eeeeee",   # gray
+    "予約済": "#ffe2c2",
+    "保留":   "#f3d4ff",
+    "返品":   "#ffd6d6",
+}
 SALE_METHODS = ["ヤフオク", "会社直販", "直メール", "Y直メ", "代理店", "1円スタート", "1円即決", "レンタル", "その他"]
 PAYMENT_STATUSES = ["未入金", "入金済", "一部入金", "保留"]
 ORDER_STATUSES = ["受注", "入金済", "検品済", "出荷済", "キャンセル"]
@@ -1159,7 +1168,7 @@ class ShipDialog(tk.Toplevel):
                 FROM units u
                 LEFT JOIN sales s ON s.unit_id = u.id
                 LEFT JOIN purchases p ON p.unit_id = u.id
-                WHERE s.id IS NULL AND u.status != '出荷済'
+                WHERE s.id IS NULL AND u.status = '在庫'
                 ORDER BY u.model, u.id
             """).fetchall()
         self.tree.delete(*self.tree.get_children())
@@ -1220,6 +1229,487 @@ class ShipDialog(tk.Toplevel):
         if self.on_done:
             self.on_done()
         self.destroy()
+
+
+# ------------------------------------------------------------------
+# Master 一覧 + 詳細編集ポップアップ
+# ------------------------------------------------------------------
+
+class MasterTab(ttk.Frame):
+    """全シリアルのマスター一覧。状態色付け、フィルタ、検索、ソート、
+    ダブルクリックで詳細ポップアップ編集。"""
+
+    def __init__(self, master, app):
+        super().__init__(master, padding=12)
+        self.app = app
+        self._build()
+        self.refresh()
+
+    def _build(self):
+        ttk.Label(self, text="個体一覧（全シリアル・状態色分け）",
+                  font=("", 14, "bold")).pack(anchor="w", pady=(0, 8))
+
+        top = ttk.Frame(self)
+        top.pack(fill="x", pady=4)
+        ttk.Button(top, text="更新", command=self.refresh).pack(side="left")
+
+        ttk.Label(top, text="    状態:").pack(side="left", padx=(20, 4))
+        self.status_var = tk.StringVar(value="(全部)")
+        ttk.Combobox(top, textvariable=self.status_var,
+                     values=["(全部)", "在庫", "資産", "部品取り", "出荷済",
+                             "予約済", "保留", "返品"],
+                     width=12, state="readonly").pack(side="left")
+        self.status_var.trace_add("write", lambda *_: self.refresh())
+
+        ttk.Label(top, text="    機種/シリアル/購入者:").pack(side="left", padx=(20, 4))
+        self.q_var = tk.StringVar()
+        ent = ttk.Entry(top, textvariable=self.q_var, width=30)
+        ent.pack(side="left")
+        ent.bind("<KeyRelease>", lambda e: self.refresh())
+
+        ttk.Button(top, text="CSV書き出し", command=self._export).pack(side="right", padx=4)
+
+        cols = ("status", "serial", "model", "mfg_date",
+                "purchase_date", "vendor", "amount",
+                "sale_date", "customer", "address", "total", "payment", "memo")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
+        for k, t, w, a in [
+            ("status", "状態", 70, "w"),
+            ("serial", "シリアル", 110, "w"),
+            ("model", "機種", 180, "w"),
+            ("mfg_date", "製造日", 90, "w"),
+            ("purchase_date", "入荷日", 90, "w"),
+            ("vendor", "仕入先", 160, "w"),
+            ("amount", "入荷金額", 90, "e"),
+            ("sale_date", "出荷日", 90, "w"),
+            ("customer", "購入者", 140, "w"),
+            ("address", "住所", 180, "w"),
+            ("total", "売上金額", 90, "e"),
+            ("payment", "入金", 60, "w"),
+            ("memo", "メモ", 180, "w"),
+        ]:
+            self.tree.heading(k, text=t, command=lambda c=k: self._sort(c))
+            self.tree.column(k, width=w, anchor=a)
+        for st, color in STATUS_COLORS.items():
+            self.tree.tag_configure(st, background=color)
+        self.tree.pack(fill="both", expand=True, pady=4)
+        self.tree.bind("<Double-1>", self._open_detail)
+
+        sb = ttk.Scrollbar(self.tree, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", pady=4)
+        self.summary_label = ttk.Label(bottom, text="", font=("", 11, "bold"))
+        self.summary_label.pack(side="left")
+
+        self._sort_col: str | None = None
+        self._sort_asc = True
+
+    def refresh(self):
+        st = self.status_var.get() if hasattr(self, "status_var") else "(全部)"
+        kw = self.q_var.get().strip() if hasattr(self, "q_var") else ""
+
+        sql = """
+            SELECT u.id, u.serial_no, u.model, u.mfg_date, u.status,
+                   u.memo AS unit_memo,
+                   p.purchase_date, p.vendor_name, p.amount,
+                   s.sale_date, s.customer_name, s.address,
+                   s.total_amount, s.payment_status
+            FROM units u
+            LEFT JOIN sales s ON s.unit_id = u.id
+            LEFT JOIN purchases p ON p.unit_id = u.id
+            WHERE 1=1
+        """
+        params: list = []
+        if st != "(全部)":
+            sql += " AND u.status = ?"
+            params.append(st)
+        if kw:
+            sql += (" AND (u.model LIKE ? OR u.serial_no LIKE ?"
+                    " OR s.customer_name LIKE ? OR s.address LIKE ?)")
+            like = f"%{kw}%"
+            params += [like, like, like, like]
+        sql += " ORDER BY u.model, u.id"
+
+        with connect() as conn:
+            rows = list(conn.execute(sql, params))
+
+        self.tree.delete(*self.tree.get_children())
+        from collections import Counter
+        counter: Counter = Counter()
+        in_stock_amount = 0
+        for r in rows:
+            counter[r["status"]] += 1
+            amt = r["amount"]
+            tot = r["total_amount"]
+            tag = (r["status"],) if r["status"] in STATUS_COLORS else ()
+            self.tree.insert("", "end", iid=str(r["id"]), values=(
+                r["status"] or "",
+                r["serial_no"] or "",
+                r["model"] or "",
+                r["mfg_date"] or "",
+                r["purchase_date"] or "",
+                r["vendor_name"] or "",
+                f"{amt:,}" if amt is not None else "",
+                r["sale_date"] or "",
+                r["customer_name"] or "",
+                r["address"] or "",
+                f"{tot:,}" if tot is not None else "",
+                r["payment_status"] or "",
+                (r["unit_memo"] or "").replace("\n", " / "),
+            ), tags=tag)
+            if r["status"] == "在庫" and amt is not None:
+                in_stock_amount += amt
+
+        parts = [f"表示: {len(rows)} 台"]
+        for s in ("在庫", "資産", "部品取り", "出荷済", "予約済", "保留", "返品"):
+            if counter[s]:
+                parts.append(f"{s}: {counter[s]}")
+        parts.append(f"在庫の入荷金額計: {in_stock_amount:,} 円")
+        self.summary_label.config(text="  /  ".join(parts))
+
+    def _open_detail(self, _evt=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        DetailDialog(self, self.app, unit_id=int(sel[0]), on_save=self._after_save)
+
+    def _after_save(self):
+        self.refresh()
+        # refresh sibling tabs that also depend on units/sales
+        self.app.orders.refresh()
+
+    def _sort(self, col):
+        if self._sort_col == col:
+            self._sort_asc = not self._sort_asc
+        else:
+            self._sort_col = col
+            self._sort_asc = True
+        items = [(self.tree.set(k, col), k) for k in self.tree.get_children("")]
+
+        def keyfn(v):
+            s = str(v).replace(",", "").strip()
+            if not s:
+                return (1, "")
+            try:
+                return (0, float(s))
+            except ValueError:
+                return (0, s)
+
+        items.sort(key=lambda x: keyfn(x[0]), reverse=not self._sort_asc)
+        for i, (_, k) in enumerate(items):
+            self.tree.move(k, "", i)
+
+    def _export(self):
+        from export_csv import export_sales as _export_rows
+        st = self.status_var.get()
+        kw = self.q_var.get().strip()
+        sql = """
+            SELECT u.id AS unit_id, u.serial_no, u.model, u.mfg_date, u.status,
+                   u.memo AS unit_memo,
+                   p.purchase_date, p.vendor_name, p.vendor_company,
+                   p.amount AS purchase_amount, p.invoice_no AS purchase_invoice,
+                   s.sale_date, s.delivery_date, s.customer_name, s.customer_company,
+                   s.postal, s.address, s.phone, s.email, s.yahoo_id,
+                   s.sale_method, s.invoice_no, s.freight, s.total_amount,
+                   s.payment_status, s.payment_date, s.memo AS sale_memo
+            FROM units u
+            LEFT JOIN sales s ON s.unit_id = u.id
+            LEFT JOIN purchases p ON p.unit_id = u.id
+            WHERE 1=1
+        """
+        params: list = []
+        if st != "(全部)":
+            sql += " AND u.status = ?"
+            params.append(st)
+        if kw:
+            sql += (" AND (u.model LIKE ? OR u.serial_no LIKE ?"
+                    " OR s.customer_name LIKE ? OR s.address LIKE ?)")
+            like = f"%{kw}%"
+            params += [like, like, like, like]
+        sql += " ORDER BY u.model, u.id"
+        with connect() as conn:
+            rows = list(conn.execute(sql, params))
+        dest = _export_rows(rows)
+        messagebox.showinfo("CSV書き出し", f"書き出しました:\n{dest}")
+        open_path(dest.parent)
+
+
+class DetailDialog(tk.Toplevel):
+    """個体の詳細編集ポップアップ。機体・入荷・出荷・添付の4セクション。"""
+
+    def __init__(self, parent, app, unit_id: int, on_save=None):
+        super().__init__(parent)
+        self.app = app
+        self.unit_id = unit_id
+        self.on_save = on_save
+        self.title(f"個体詳細 #{unit_id}")
+        self.transient(parent)
+        self.grab_set()
+        self.geometry("780x720")
+        self._build()
+        self._load()
+
+    def _build(self):
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=8, pady=8)
+
+        # 機体
+        t1 = ttk.Frame(nb, padding=10)
+        nb.add(t1, text="機体")
+        self.f_model = LabeledEntry(t1, "機種 *")
+        self.f_serial = LabeledEntry(t1, "シリアル")
+        self.f_mfg = LabeledEntry(t1, "製造年月日")
+        self.f_status = LabeledCombo(t1, "状態", UNIT_STATUSES)
+        for w in (self.f_model, self.f_serial, self.f_mfg, self.f_status):
+            w.pack(fill="x", pady=3)
+        ttk.Label(t1, text="機体メモ:").pack(anchor="w", pady=(8, 2))
+        self.f_memo = tk.Text(t1, height=8, wrap="word")
+        self.f_memo.pack(fill="both", expand=True)
+
+        # 入荷
+        t2 = ttk.Frame(nb, padding=10)
+        nb.add(t2, text="入荷")
+        self.f_pdate = LabeledEntry(t2, "入荷日")
+        self.f_vendor = LabeledEntry(t2, "仕入先", width=42)
+        self.f_vcompany = LabeledEntry(t2, "仕入先会社")
+        self.f_amount = LabeledEntry(t2, "仕入金額")
+        self.f_pinvoice = LabeledEntry(t2, "請求書番号")
+        for w in (self.f_pdate, self.f_vendor, self.f_vcompany, self.f_amount, self.f_pinvoice):
+            w.pack(fill="x", pady=3)
+        ttk.Label(t2, text="仕入メモ:").pack(anchor="w", pady=(8, 2))
+        self.f_pmemo = tk.Text(t2, height=4, wrap="word")
+        self.f_pmemo.pack(fill="x")
+
+        # 出荷
+        t3 = ttk.Frame(nb, padding=10)
+        nb.add(t3, text="出荷")
+        self.f_sdate = LabeledEntry(t3, "売上日")
+        self.f_ddate = LabeledEntry(t3, "納品日")
+        self.f_method = LabeledCombo(t3, "販売方法", SALE_METHODS)
+        self.f_cust = LabeledEntry(t3, "お客様")
+        self.f_company = LabeledEntry(t3, "会社/発注番号")
+        self.f_postal = LabeledEntry(t3, "郵便番号")
+        self.f_addr = LabeledEntry(t3, "住所", width=50)
+        self.f_phone = LabeledEntry(t3, "電話")
+        self.f_email = LabeledEntry(t3, "メール")
+        self.f_sinvoice = LabeledEntry(t3, "請求書番号")
+        self.f_freight = LabeledEntry(t3, "送料")
+        self.f_total = LabeledEntry(t3, "売上金額")
+        self.f_pay = LabeledCombo(t3, "入金状態", PAYMENT_STATUSES)
+        self.f_paydate = LabeledEntry(t3, "入金日")
+        for w in (self.f_sdate, self.f_ddate, self.f_method, self.f_cust,
+                  self.f_company, self.f_postal, self.f_addr, self.f_phone,
+                  self.f_email, self.f_sinvoice, self.f_freight,
+                  self.f_total, self.f_pay, self.f_paydate):
+            w.pack(fill="x", pady=2)
+        ttk.Label(t3, text="売上メモ:").pack(anchor="w", pady=(6, 2))
+        self.f_smemo = tk.Text(t3, height=3, wrap="word")
+        self.f_smemo.pack(fill="x")
+
+        # 添付
+        t4 = ttk.Frame(nb, padding=10)
+        nb.add(t4, text="添付ファイル")
+        bar = ttk.Frame(t4); bar.pack(fill="x")
+        ttk.Button(bar, text="画像/伝票を追加", command=self._add_attachment).pack(side="left")
+        ttk.Button(bar, text="フォルダを開く", command=self._open_folder).pack(side="left", padx=6)
+        self.att_list = tk.Listbox(t4, height=12)
+        self.att_list.pack(fill="both", expand=True, pady=8)
+        self.att_list.bind("<Double-1>", self._open_attachment)
+
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", padx=8, pady=6)
+        ttk.Button(bottom, text="個体を削除", command=self._delete).pack(side="left")
+        ttk.Button(bottom, text="閉じる", command=self.destroy).pack(side="right")
+        ttk.Button(bottom, text="保存", command=self._save).pack(side="right", padx=6)
+
+    def _set_text(self, widget, value):
+        widget.delete("1.0", "end")
+        if value:
+            widget.insert("1.0", value)
+
+    def _load(self):
+        with connect() as conn:
+            u = conn.execute("SELECT * FROM units WHERE id=?", (self.unit_id,)).fetchone()
+            if not u:
+                messagebox.showerror("エラー", "個体が見つかりません")
+                self.destroy()
+                return
+            p = conn.execute("SELECT * FROM purchases WHERE unit_id=?", (self.unit_id,)).fetchone()
+            s = conn.execute("SELECT * FROM sales WHERE unit_id=?", (self.unit_id,)).fetchone()
+            atts = conn.execute(
+                "SELECT * FROM attachments WHERE unit_id=? ORDER BY created_at DESC",
+                (self.unit_id,)).fetchall()
+
+        self.f_model.set(u["model"] or "")
+        self.f_serial.set(u["serial_no"] or "")
+        self.f_mfg.set(u["mfg_date"] or "")
+        self.f_status.set(u["status"] or "在庫")
+        self._set_text(self.f_memo, u["memo"] or "")
+
+        if p:
+            self.f_pdate.set(p["purchase_date"] or "")
+            self.f_vendor.set(p["vendor_name"] or "")
+            self.f_vcompany.set(p["vendor_company"] or "")
+            self.f_amount.set(str(p["amount"]) if p["amount"] is not None else "")
+            self.f_pinvoice.set(p["invoice_no"] or "")
+            self._set_text(self.f_pmemo, p["memo"] or "")
+
+        if s:
+            self.f_sdate.set(s["sale_date"] or "")
+            self.f_ddate.set(s["delivery_date"] or "")
+            self.f_method.set(s["sale_method"] or "")
+            self.f_cust.set(s["customer_name"] or "")
+            self.f_company.set(s["customer_company"] or "")
+            self.f_postal.set(s["postal"] or "")
+            self.f_addr.set(s["address"] or "")
+            self.f_phone.set(s["phone"] or "")
+            self.f_email.set(s["email"] or "")
+            self.f_sinvoice.set(s["invoice_no"] or "")
+            self.f_freight.set(str(s["freight"]) if s["freight"] is not None else "")
+            self.f_total.set(str(s["total_amount"]) if s["total_amount"] is not None else "")
+            self.f_pay.set(s["payment_status"] or "")
+            self.f_paydate.set(s["payment_date"] or "")
+            self._set_text(self.f_smemo, s["memo"] or "")
+
+        self.att_list.delete(0, "end")
+        self._att_paths: list[str] = []
+        for a in atts:
+            self.att_list.insert("end", a["file_path"])
+            self._att_paths.append(a["file_path"])
+
+    def _save(self):
+        model = self.f_model.get()
+        if not model:
+            messagebox.showwarning("入力エラー", "機種は必須です")
+            return
+        try:
+            with connect() as conn:
+                conn.execute(
+                    """UPDATE units SET serial_no=?, model=?, mfg_date=?,
+                       status=?, memo=?, updated_at=datetime('now','localtime')
+                       WHERE id=?""",
+                    (self.f_serial.get() or None, model, self.f_mfg.get() or None,
+                     self.f_status.get() or "在庫",
+                     self.f_memo.get("1.0", "end").strip() or None,
+                     self.unit_id),
+                )
+
+                p_values = (
+                    self.f_pdate.get() or None,
+                    self.f_vendor.get() or None,
+                    self.f_vcompany.get() or None,
+                    parse_int(self.f_amount.get()),
+                    self.f_pinvoice.get() or None,
+                    self.f_pmemo.get("1.0", "end").strip() or None,
+                )
+                if any(v is not None for v in p_values):
+                    p_exists = conn.execute(
+                        "SELECT id FROM purchases WHERE unit_id=?", (self.unit_id,)
+                    ).fetchone()
+                    if p_exists:
+                        conn.execute(
+                            """UPDATE purchases SET purchase_date=?, vendor_name=?,
+                               vendor_company=?, amount=?, invoice_no=?, memo=?
+                               WHERE unit_id=?""",
+                            p_values + (self.unit_id,),
+                        )
+                    else:
+                        conn.execute(
+                            """INSERT INTO purchases(unit_id, purchase_date, vendor_name,
+                               vendor_company, amount, invoice_no, memo)
+                               VALUES (?,?,?,?,?,?,?)""",
+                            (self.unit_id,) + p_values,
+                        )
+
+                s_values = (
+                    self.f_sdate.get() or None,
+                    self.f_ddate.get() or None,
+                    self.f_method.get() or None,
+                    self.f_cust.get() or None,
+                    self.f_company.get() or None,
+                    self.f_postal.get() or None,
+                    self.f_addr.get() or None,
+                    self.f_phone.get() or None,
+                    self.f_email.get() or None,
+                    self.f_sinvoice.get() or None,
+                    parse_int(self.f_freight.get()),
+                    parse_int(self.f_total.get()),
+                    self.f_pay.get() or None,
+                    self.f_paydate.get() or None,
+                    self.f_smemo.get("1.0", "end").strip() or None,
+                )
+                if any(v is not None for v in s_values):
+                    s_exists = conn.execute(
+                        "SELECT id FROM sales WHERE unit_id=?", (self.unit_id,)
+                    ).fetchone()
+                    if s_exists:
+                        conn.execute(
+                            """UPDATE sales SET sale_date=?, delivery_date=?, sale_method=?,
+                               customer_name=?, customer_company=?, postal=?, address=?,
+                               phone=?, email=?, invoice_no=?, freight=?, total_amount=?,
+                               payment_status=?, payment_date=?, memo=?
+                               WHERE unit_id=?""",
+                            s_values + (self.unit_id,),
+                        )
+                    else:
+                        conn.execute(
+                            """INSERT INTO sales(unit_id, sale_date, delivery_date,
+                               sale_method, customer_name, customer_company,
+                               postal, address, phone, email, invoice_no,
+                               freight, total_amount, payment_status, payment_date, memo)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            (self.unit_id,) + s_values,
+                        )
+        except Exception as e:
+            messagebox.showerror("エラー", f"保存失敗: {e}")
+            return
+        if self.on_save:
+            self.on_save()
+        self.destroy()
+
+    def _delete(self):
+        if not messagebox.askyesno("確認", f"個体 #{self.unit_id} を削除しますか？"
+                                            "（関連する入荷・出荷情報も消えます）"):
+            return
+        with connect() as conn:
+            conn.execute("DELETE FROM units WHERE id=?", (self.unit_id,))
+        if self.on_save:
+            self.on_save()
+        self.destroy()
+
+    def _add_attachment(self):
+        path = filedialog.askopenfilename(title="添付ファイル選択")
+        if not path:
+            return
+        src = Path(path)
+        dest_dir = ATTACHMENTS_DIR / str(self.unit_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / src.name
+        try:
+            shutil.copy2(src, dest)
+            with connect() as conn:
+                conn.execute(
+                    "INSERT INTO attachments(unit_id, file_path) VALUES (?,?)",
+                    (self.unit_id, str(dest)),
+                )
+        except Exception as e:
+            messagebox.showerror("エラー", f"添付に失敗: {e}")
+            return
+        self._load()
+
+    def _open_attachment(self, _evt=None):
+        sel = self.att_list.curselection()
+        if not sel:
+            return
+        open_path(Path(self._att_paths[sel[0]]))
+
+    def _open_folder(self):
+        d = ATTACHMENTS_DIR / str(self.unit_id)
+        d.mkdir(parents=True, exist_ok=True)
+        open_path(d)
 
 
 # ------------------------------------------------------------------
@@ -1312,18 +1802,12 @@ class App(tk.Tk):
 
         self.incoming = IncomingTab(nb, self)
         self.orders = OrderTab(nb, self)
-        self.outgoing = OutgoingTab(nb, self)
-        self.list_tab = ListTab(nb, self)
-        self.stock_tab = StockTab(nb, self)
-        self.detail = DetailTab(nb, self)
+        self.master = MasterTab(nb, self)
         self.tools = ToolsTab(nb, self)
 
         nb.add(self.incoming, text="📥 入荷登録")
         nb.add(self.orders, text="📝 受注")
-        nb.add(self.outgoing, text="📤 出荷登録")
-        nb.add(self.list_tab, text="📋 一覧/検索")
-        nb.add(self.stock_tab, text="📦 在庫")
-        nb.add(self.detail, text="🖼 詳細/画像")
+        nb.add(self.master, text="📋 一覧")
         nb.add(self.tools, text="⚙ ツール")
 
         self.nb = nb
@@ -1341,14 +1825,11 @@ class App(tk.Tk):
         style.configure("Treeview.Heading", font=("Yu Gothic UI", 10, "bold"))
 
     def refresh_all(self):
-        self.outgoing.refresh()
-        self.list_tab.refresh()
-        self.stock_tab.refresh()
+        self.master.refresh()
         self.orders.refresh()
 
     def show_detail(self, unit_id: int):
-        self.nb.select(self.detail)
-        self.detail.load(unit_id)
+        DetailDialog(self, self, unit_id=unit_id, on_save=self.refresh_all)
 
 
 def main():

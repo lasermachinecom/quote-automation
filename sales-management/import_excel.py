@@ -72,39 +72,43 @@ def _unmerge_in_memory(ws) -> None:
                 ws.cell(row=cell.row, column=cell.column).value = value
 
 
-def _is_highlighted(cell) -> bool:
-    """Return True if the cell has a non-white solid fill — i.e. the user
-    has marked it as in-stock (yellow / 資産計上 green / 部品取り etc.).
-    Cells with no fill, or solid fill using the default white background
-    theme, are treated as 'no longer in stock'."""
+def _detect_status(cell) -> str:
+    """Map the user's color-coding on the serial cell to a unit status:
+        黄色 (rgb FFFFFF00)  → '在庫'
+        緑   (rgb FF92D050)  → '資産'
+        水色 (theme 3)       → '部品取り'
+        色なし / 白 (theme 0) → '出荷済'
+    Unknown highlights default to '在庫' so we don't silently drop them
+    from the live inventory."""
     fill = cell.fill
-    if fill is None or fill.patternType is None:
-        return False
-    if fill.patternType != "solid":
-        return False
+    if fill is None or fill.patternType != "solid":
+        return "出荷済"
     fg = fill.fgColor
     if fg is None:
-        return False
+        return "出荷済"
     if fg.type == "rgb":
         try:
-            rgb = fg.rgb or ""
+            rgb = (fg.rgb or "").upper()
         except Exception:
             rgb = ""
-        # 00000000 = "no color set", FFFFFFFF = explicit white
         if rgb in ("00000000", "", "FFFFFFFF"):
-            return False
-        return True
+            return "出荷済"
+        if "FFFF00" in rgb:
+            return "在庫"
+        if "92D050" in rgb:
+            return "資産"
+        return "在庫"
     if fg.type == "theme":
-        # theme 0 = background light 1 (white), theme 1 = text dark 1 (black)
-        # Anything else is an accent / fill color = treat as highlight.
         try:
             theme = fg.theme
         except Exception:
             theme = None
         if theme in (0, 1, None):
-            return False
-        return True
-    return False
+            return "出荷済"
+        if theme == 3:
+            return "部品取り"
+        return "在庫"
+    return "出荷済"
 
 
 def _s(v):
@@ -201,14 +205,13 @@ def import_excel(xlsx_path: Path) -> tuple[int, int]:
             if not model:
                 model = "(機種不明)"
 
-            # Truth source for in-stock vs sold is the yellow highlight on
-            # the serial cell. The 出荷日 column is unreliable for older
-            # rows where the date was never back-filled.
+            # Truth source for status is the color highlight on the serial
+            # cell. The 出荷日 column is unreliable for older rows where the
+            # date was never back-filled.
             serial_cell = ws.cell(row=r, column=COL["serial"])
-            in_stock_by_color = _is_highlighted(serial_cell)
+            status = _detect_status(serial_cell)
+            shipped = (status == "出荷済")
             ship_val = get("ship")
-            shipped = not in_stock_by_color
-            status = "在庫" if in_stock_by_color else "出荷済"
 
             unit_memo = _join_memo(
                 ("通番", get("seq")),
