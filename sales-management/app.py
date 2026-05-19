@@ -977,37 +977,53 @@ class OrderDialog(tk.Toplevel):
     """新規 / 編集 受注フォーム（ポップアップ）"""
 
     def __init__(self, parent, app, order_id=None, on_save=None):
+        print(f"[DEBUG] OrderDialog.__init__ start", flush=True)
         super().__init__(app)
+        print(f"[DEBUG] Toplevel super().__init__ done", flush=True)
         self.app = app
         self.order_id = order_id
         self.on_save = on_save
         self.title(f"受注 編集 #{order_id}" if order_id else "受注 新規登録")
+        print(f"[DEBUG] title set", flush=True)
         try:
             px = app.winfo_rootx()
             py = app.winfo_rooty()
         except Exception:
             px = py = 100
         self.geometry(f"680x640+{px + 60}+{py + 60}")
+        print(f"[DEBUG] geometry set", flush=True)
         self._build()
+        print(f"[DEBUG] _build done", flush=True)
         if order_id:
             self._load(order_id)
         else:
             self.f_odate.set(today())
+        print(f"[DEBUG] today set", flush=True)
         self.lift()
+        print(f"[DEBUG] lift done", flush=True)
         self.focus_force()
+        print(f"[DEBUG] focus_force done", flush=True)
         self.attributes("-topmost", True)
+        print(f"[DEBUG] topmost set", flush=True)
         self.after(200, lambda: self.attributes("-topmost", False))
+        print(f"[DEBUG] OrderDialog.__init__ end", flush=True)
 
     def _build(self):
+        print(f"[DEBUG] _build start", flush=True)
         wrap = ttk.Frame(self, padding=10)
         wrap.pack(fill="both", expand=True)
+        print(f"[DEBUG] wrap created", flush=True)
 
         f1 = ttk.LabelFrame(wrap, text="受注基本")
         f1.pack(fill="x", pady=4)
         self.f_odate = LabeledEntry(f1, "受注日")
+        print(f"[DEBUG] f_odate created", flush=True)
         self.f_status = LabeledCombo(f1, "状態", ORDER_STATUSES)
+        print(f"[DEBUG] f_status created", flush=True)
         self.f_status.set("受注")
+        print(f"[DEBUG] f_status.set done", flush=True)
         self.f_method = LabeledCombo(f1, "販売方法", SALE_METHODS)
+        print(f"[DEBUG] f_method created", flush=True)
         self.f_model = LabeledEntry(f1, "受注機種")
         for w in (self.f_odate, self.f_status, self.f_method, self.f_model):
             w.pack(fill="x", pady=2, padx=6)
