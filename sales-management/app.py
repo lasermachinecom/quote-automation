@@ -717,10 +717,12 @@ class ToolsTab(ttk.Frame):
     def _build(self):
         ttk.Label(self, text="ツール", font=("", 14, "bold")).pack(anchor="w", pady=(0, 8))
 
-        f1 = ttk.LabelFrame(self, text="Excel取込")
+        f1 = ttk.LabelFrame(self, text="Excel取込（シリアル照合表）")
         f1.pack(fill="x", pady=4)
-        ttk.Label(f1, text="既存の売上Excelを読み込んでDBに取り込みます（初回のみ実行）",
-                  foreground="#555").pack(anchor="w", padx=8, pady=4)
+        ttk.Label(f1, text="「全機種　シリアル照合表」シートを読み込んでDBに取り込みます。\n"
+                          "出荷日が空の行→在庫、出荷日に日付がある行→出荷済として登録します。\n"
+                          "※重複登録を避けるため、再取込前にDBバックアップ推奨。",
+                  foreground="#555", justify="left").pack(anchor="w", padx=8, pady=4)
         ttk.Button(f1, text="Excelファイルを選択してインポート", command=self._import).pack(anchor="w", padx=8, pady=4)
 
         f2 = ttk.LabelFrame(self, text="CSV書き出し")
