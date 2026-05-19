@@ -56,6 +56,21 @@ def _pick_sheet(wb):
     )
 
 
+def _unmerge_in_memory(ws) -> None:
+    """Propagate the top-left value of every merged range to all cells in the
+    range. Unmerges in-memory so .cell(row, col).value works uniformly for
+    every row covered by the merge."""
+    ranges = [str(r) for r in ws.merged_cells.ranges]
+    for ref in ranges:
+        merged_range = ws[ref]
+        top_left = merged_range[0][0]
+        value = top_left.value
+        ws.unmerge_cells(ref)
+        for row in merged_range:
+            for cell in row:
+                ws.cell(row=cell.row, column=cell.column).value = value
+
+
 def _s(v):
     if v is None:
         return None
@@ -111,6 +126,7 @@ def import_excel(xlsx_path: Path) -> tuple[int, int]:
     init_db()
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     ws = _pick_sheet(wb)
+    _unmerge_in_memory(ws)
 
     imported = 0
     skipped = 0
