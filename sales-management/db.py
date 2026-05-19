@@ -75,6 +75,35 @@ CREATE TABLE IF NOT EXISTS attachments (
     created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_attach_unit ON attachments(unit_id);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_date        TEXT,
+    customer_name     TEXT,
+    customer_company  TEXT,
+    postal            TEXT,
+    address           TEXT,
+    phone             TEXT,
+    email             TEXT,
+    yahoo_id          TEXT,
+    sale_method       TEXT,
+    model_requested   TEXT,
+    invoice_no        TEXT,
+    total_amount      INTEGER,
+    freight           INTEGER,
+    payment_status    TEXT NOT NULL DEFAULT '未入金',
+    payment_date      TEXT,
+    desired_ship_date TEXT,
+    inspection_status TEXT NOT NULL DEFAULT '未検品',
+    status            TEXT NOT NULL DEFAULT '受注',
+    assigned_unit_id  INTEGER REFERENCES units(id) ON DELETE SET NULL,
+    sale_id           INTEGER REFERENCES sales(id) ON DELETE SET NULL,
+    memo              TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_name);
 """
 
 
