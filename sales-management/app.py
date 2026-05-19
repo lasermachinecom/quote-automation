@@ -987,7 +987,7 @@ class OrderDialog(tk.Toplevel):
 
     def __init__(self, parent, app, order_id=None, on_save=None):
         print(f"[DEBUG] OrderDialog.__init__ start", flush=True)
-        super().__init__(app)
+        super().__init__()  # no parent — avoids Toplevel(app) hang on some Tk builds
         print(f"[DEBUG] Toplevel super().__init__ done", flush=True)
         self.app = app
         self.order_id = order_id
