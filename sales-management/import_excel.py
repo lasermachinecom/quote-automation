@@ -182,7 +182,7 @@ def _is_shipped(ship_val) -> bool:
 
 def import_excel(xlsx_path: Path) -> tuple[int, int]:
     """Returns (imported_count, skipped_count)."""
-    init_db()
+    init_db(DB_PATH)
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     ws = _pick_sheet(wb)
     _unmerge_in_memory(ws)

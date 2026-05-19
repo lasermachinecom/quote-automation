@@ -76,12 +76,23 @@ sales-management/
 ├── export_csv.py      # CSV 書き出し
 ├── config.py          # パス設定
 ├── requirements.txt
+├── requirements-dev.txt  # pytest 等の開発依存
 ├── run.bat            # Windows 起動用
+├── tests/             # pytest テスト
 └── data/              # ← 起動時に自動生成
     ├── sales.db       #   SQLite データベース本体
     ├── attachments/   #   添付画像/PDF
     └── exports/       #   CSV 書き出し先
 ```
+
+## 開発者向け: テスト実行
+
+```
+py -3.12 -m pip install -r requirements-dev.txt
+py -3.12 -m pytest
+```
+
+`tests/` は SQLite テンポラリDB を使うため、本番 `data/sales.db` には触れません。
 
 ## バックアップ
 
@@ -90,7 +101,6 @@ sales-management/
 
 ## 既知の制約
 
-- 既存Excelからの取込分は「入荷」情報なし（出荷のみ）。必要な場合は後から
-  該当個体を選んで仕入先などを手入力してください。
 - 機種名の表記揺れ（`LT6040-40w` / `LT6040-40w　MPC` 等）は自動正規化していません。
   検索は部分一致で動作します。
+- Python 3.14 は受注／出荷ダイアログのハング問題により対象外。3.12 を使用してください。
