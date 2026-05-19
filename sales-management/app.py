@@ -970,7 +970,12 @@ class OrderDialog(tk.Toplevel):
         self.order_id = order_id
         self.on_save = on_save
         self.title(f"受注 編集 #{order_id}" if order_id else "受注 新規登録")
-        self.geometry("680x640")
+        try:
+            px = app.winfo_rootx()
+            py = app.winfo_rooty()
+        except Exception:
+            px = py = 100
+        self.geometry(f"680x640+{px + 60}+{py + 60}")
         self._build()
         if order_id:
             self._load(order_id)
@@ -978,6 +983,8 @@ class OrderDialog(tk.Toplevel):
             self.f_odate.set(today())
         self.lift()
         self.focus_force()
+        self.attributes("-topmost", True)
+        self.after(200, lambda: self.attributes("-topmost", False))
 
     def _build(self):
         wrap = ttk.Frame(self, padding=10)
@@ -1110,11 +1117,18 @@ class ShipDialog(tk.Toplevel):
         self.on_done = on_done
         self.selected_unit_id = None
         self.title(f"出荷確定（受注 #{order['id']}）")
-        self.geometry("760x520")
+        try:
+            px = app.winfo_rootx()
+            py = app.winfo_rooty()
+        except Exception:
+            px = py = 100
+        self.geometry(f"760x520+{px + 60}+{py + 60}")
         self._build()
         self._refresh_units()
         self.lift()
         self.focus_force()
+        self.attributes("-topmost", True)
+        self.after(200, lambda: self.attributes("-topmost", False))
 
     def _build(self):
         wrap = ttk.Frame(self, padding=10)
@@ -1446,11 +1460,18 @@ class DetailDialog(tk.Toplevel):
         self.unit_id = unit_id
         self.on_save = on_save
         self.title(f"個体詳細 #{unit_id}")
-        self.geometry("780x720")
+        try:
+            px = app.winfo_rootx()
+            py = app.winfo_rooty()
+        except Exception:
+            px = py = 100
+        self.geometry(f"780x720+{px + 60}+{py + 60}")
         self._build()
         self._load()
         self.lift()
         self.focus_force()
+        self.attributes("-topmost", True)
+        self.after(200, lambda: self.attributes("-topmost", False))
 
     def _build(self):
         nb = ttk.Notebook(self)
