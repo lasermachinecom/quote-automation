@@ -467,31 +467,75 @@ class StockTab(ttk.Frame):
         self.refresh()
 
     def _build(self):
-        ttk.Label(self, text="在庫サマリ（未出荷の個体）", font=("", 14, "bold")).pack(anchor="w", pady=(0, 8))
+        ttk.Label(self, text="在庫一覧（未出荷の個体）", font=("", 14, "bold")).pack(anchor="w", pady=(0, 8))
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", pady=4)
         ttk.Button(btns, text="更新", command=self.refresh).pack(side="left")
         ttk.Button(btns, text="在庫CSV書き出し", command=self._export).pack(side="left", padx=6)
+        ttk.Label(btns, text="    機種で絞り込み:").pack(side="left", padx=(20, 4))
+        self.filter_var = tk.StringVar()
+        ent = ttk.Entry(btns, textvariable=self.filter_var, width=24)
+        ent.pack(side="left")
+        ent.bind("<KeyRelease>", lambda e: self.refresh())
 
-        self.tree = ttk.Treeview(self, columns=("model", "count"), show="headings", height=22)
-        self.tree.heading("model", text="機種")
-        self.tree.heading("count", text="在庫数")
-        self.tree.column("model", width=420, anchor="w")
-        self.tree.column("count", width=80, anchor="e")
+        cols = ("serial", "model", "mfg_date", "purchase_date", "vendor", "memo")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
+        for k, t, w, a in [
+            ("serial", "シリアルNo.", 110, "w"),
+            ("model", "機種", 220, "w"),
+            ("mfg_date", "製造年月日", 100, "w"),
+            ("purchase_date", "入荷日", 100, "w"),
+            ("vendor", "仕入先", 140, "w"),
+            ("memo", "メモ", 380, "w"),
+        ]:
+            self.tree.heading(k, text=t)
+            self.tree.column(k, width=w, anchor=a)
         self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<Double-1>", self._open_detail)
 
         self.total_label = ttk.Label(self, text="合計: 0 台", font=("", 11, "bold"))
         self.total_label.pack(anchor="e", pady=6)
 
     def refresh(self):
-        rows = stock_summary()
+        kw = (self.filter_var.get() if hasattr(self, "filter_var") else "").strip()
+        sql = """
+            SELECT u.id, u.serial_no, u.model, u.mfg_date, u.memo AS unit_memo,
+                   p.purchase_date, p.vendor_name
+            FROM units u
+            LEFT JOIN sales s ON s.unit_id = u.id
+            LEFT JOIN purchases p ON p.unit_id = u.id
+            WHERE s.id IS NULL AND u.status != '出荷済'
+        """
+        params: list = []
+        if kw:
+            sql += " AND (u.model LIKE ? OR u.serial_no LIKE ?)"
+            like = f"%{kw}%"
+            params += [like, like]
+        sql += " ORDER BY u.model, u.id"
+        with connect() as conn:
+            rows = list(conn.execute(sql, params))
+
         self.tree.delete(*self.tree.get_children())
-        total = 0
         for r in rows:
-            self.tree.insert("", "end", values=(r["model"], r["in_stock"]))
-            total += r["in_stock"]
-        self.total_label.config(text=f"合計: {total} 台")
+            memo = (r["unit_memo"] or "").replace("\n", " / ")
+            self.tree.insert("", "end", iid=str(r["id"]), values=(
+                r["serial_no"] or "",
+                r["model"] or "",
+                r["mfg_date"] or "",
+                r["purchase_date"] or "",
+                r["vendor_name"] or "",
+                memo,
+            ))
+        self.total_label.config(text=f"合計: {len(rows)} 台")
+
+    def _open_detail(self, _event):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        unit_id = int(sel[0])
+        self.app.detail.load(unit_id)
+        self.app.nb.select(self.app.detail)
 
     def _export(self):
         dest = export_stock()
