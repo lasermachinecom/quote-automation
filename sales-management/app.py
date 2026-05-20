@@ -207,7 +207,7 @@ class OrderTab(ttk.Frame):
         super().__init__(master, padding=10)
         self.app = app
         self.selected_order_id = None
-        self.mode = "form"   # "form" or "ship"
+        self.mode = None   # None until first _show_form; then "form" / "ship"
         self._build()
         self.refresh()
 
@@ -221,164 +221,179 @@ class OrderTab(ttk.Frame):
         ttk.Label(top, text="状態:").pack(side="left")
         self.status_filter = tk.StringVar(value="(全部)")
         ttk.Combobox(top, textvariable=self.status_filter,
-                     values=["(全部)"] + ORDER_STATUSES, width=10, state="readonly").pack(side="left", padx=4)
+                     values=["(全部)"] + ORDER_STATUSES, width=10,
+                     state="readonly").pack(side="left", padx=4)
         self.status_filter.trace_add("write", lambda *_: self.refresh())
 
         ttk.Label(top, text="絞り込み:").pack(side="left", padx=(10, 4))
         self.q_var = tk.StringVar()
-        self.q_var.trace_add("write", lambda *_: self.refresh())
-        ttk.Entry(top, textvariable=self.q_var, width=22).pack(side="left")
+        ent = ttk.Entry(top, textvariable=self.q_var, width=22)
+        ent.pack(side="left")
+        ent.bind("<KeyRelease>", lambda _e: self.refresh())
 
-        ttk.Button(top, text="削除", command=self._delete).pack(side="right", padx=2)
+        ttk.Button(top, text="＋ 新規受注", command=self._new).pack(side="left", padx=(16, 2))
+        ttk.Button(top, text="編集", command=self._edit).pack(side="left", padx=2)
+        ttk.Button(top, text="保存", command=self._save).pack(side="left", padx=2)
+        ttk.Button(top, text="クリア", command=self._clear).pack(side="left", padx=2)
+        ttk.Button(top, text="\U0001f4e6 出荷確定", command=self._show_ship).pack(side="left", padx=(16, 2))
+        ttk.Button(top, text="削除", command=self._delete).pack(side="left", padx=2)
 
-        pw = ttk.PanedWindow(self, orient="horizontal")
-        pw.pack(fill="both", expand=True, pady=6)
-
-        # Left: order list
-        left = ttk.Frame(pw)
-        pw.add(left, weight=2)
         cols = ("status", "date", "customer", "model", "total", "pay", "assigned")
-        self.tree = ttk.Treeview(left, columns=cols, show="headings", height=20)
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
         for k, t, w in [("status", "状態", 60), ("date", "受注日", 80),
-                        ("customer", "お客様", 140), ("model", "受注機種", 160),
+                        ("customer", "お客様", 160), ("model", "受注機種", 160),
                         ("total", "金額", 90), ("pay", "入金", 60),
                         ("assigned", "割当S/N", 100)]:
             self.tree.heading(k, text=t)
             self.tree.column(k, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True)
+        self.tree.pack(fill="x", pady=6)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.tree.bind("<Double-1>", lambda _e: self._edit())
 
-        # Right: form / ship area
-        self.right = ttk.Frame(pw)
-        pw.add(self.right, weight=3)
-
-        bottom = ttk.Frame(self)
-        bottom.pack(fill="x", pady=2, side="bottom")
-        self.count_label = ttk.Label(bottom, text="0 件")
+        info = ttk.Frame(self)
+        info.pack(fill="x")
+        self.count_label = ttk.Label(info, text="0 件")
         self.count_label.pack(side="left")
-        self.mode_label = ttk.Label(bottom, text="", foreground="#666")
+        self.mode_label = ttk.Label(info, text="", foreground="#666")
         self.mode_label.pack(side="right")
 
-        self._build_form()
+        # IMPORTANT: the form and ship views are each built ONCE and shown /
+        # hidden with pack()/pack_forget(). We never destroy and rebuild these
+        # widgets, and we avoid PanedWindow / scrollable Canvas / grid+tkraise
+        # stacking. Every one of those caused a Tk geometry feedback loop (or a
+        # hang while destroying mapped ttk.Comboboxes) that froze the event
+        # loop. Build-once + show/hide is the only pattern that stays stable.
+        self.editor = ttk.Frame(self)
+        self.editor.pack(fill="both", expand=True, pady=(6, 0))
+        self._build_form_widgets()
+        self._build_ship_widgets()
         self._show_form()
 
-    def _build_form(self):
-        self.form_frame = ttk.Frame(self.right)
+    def _build_form_widgets(self):
+        self.form_frame = ttk.Frame(self.editor)
+        ttk.Label(self.form_frame, text="受注内容",
+                  font=("", 11, "bold")).pack(anchor="w", pady=(0, 4))
+        grid = ttk.Frame(self.form_frame)
+        grid.pack(fill="x")
+        grid.columnconfigure(0, weight=1)
+        grid.columnconfigure(1, weight=1)
 
-        # Header buttons (always visible)
-        head = ttk.Frame(self.form_frame)
-        head.pack(fill="x", pady=(0, 4))
-        ttk.Button(head, text="＋ 新規受注", command=self._new).pack(side="left", padx=2)
-        ttk.Button(head, text="保存", command=self._save).pack(side="left", padx=2)
-        ttk.Button(head, text="クリア", command=self._clear).pack(side="left", padx=2)
-        ttk.Button(head, text="📦 出荷確定 →", command=self._show_ship).pack(side="right", padx=2)
+        self.f_odate = LabeledEntry(grid, "受注日")
+        self.f_status = LabeledCombo(grid, "状態", ORDER_STATUSES)
+        self.f_method = LabeledCombo(grid, "販売方法", SALE_METHODS)
+        self.f_model = LabeledEntry(grid, "受注機種")
+        self.f_cust = LabeledEntry(grid, "お客様名")
+        self.f_company = LabeledEntry(grid, "会社/発注番号")
+        self.f_postal = LabeledEntry(grid, "郵便番号")
+        self.f_addr = LabeledEntry(grid, "住所")
+        self.f_phone = LabeledEntry(grid, "電話番号")
+        self.f_email = LabeledEntry(grid, "メール")
+        self.f_yid = LabeledEntry(grid, "Yahoo ID")
+        self.f_invoice = LabeledEntry(grid, "請求書番号")
+        self.f_total = LabeledEntry(grid, "合計金額")
+        self.f_freight = LabeledEntry(grid, "送料")
+        self.f_pay = LabeledCombo(grid, "入金状態", PAYMENT_STATUSES)
+        self.f_paydate = LabeledEntry(grid, "入金日")
+        self.f_dship = LabeledEntry(grid, "希望出荷日")
+        self.f_insp = LabeledCombo(grid, "検品状態", INSPECTION_STATUSES)
+        self.f_memo = LabeledEntry(grid, "メモ")
 
-        # Scrollable area for form fields
-        canvas = tk.Canvas(self.form_frame, highlightthickness=0, borderwidth=0)
-        canvas.pack(side="left", fill="both", expand=True)
-        sb = ttk.Scrollbar(self.form_frame, orient="vertical", command=canvas.yview)
-        sb.pack(side="right", fill="y")
-        canvas.configure(yscrollcommand=sb.set)
-        inner = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>",
-                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        fields = [self.f_odate, self.f_status, self.f_method, self.f_model,
+                  self.f_cust, self.f_company, self.f_postal, self.f_addr,
+                  self.f_phone, self.f_email, self.f_yid, self.f_invoice,
+                  self.f_total, self.f_freight, self.f_pay, self.f_paydate,
+                  self.f_dship, self.f_insp, self.f_memo]
+        for i, w in enumerate(fields):
+            w.grid(row=i // 2, column=i % 2, sticky="ew", padx=6, pady=3)
 
-        f1 = ttk.LabelFrame(inner, text="受注基本")
-        f1.pack(fill="x", pady=4)
-        self.f_odate = LabeledEntry(f1, "受注日")
-        self.f_status = LabeledCombo(f1, "状態", ORDER_STATUSES)
-        self.f_method = LabeledCombo(f1, "販売方法", SALE_METHODS)
-        self.f_model = LabeledEntry(f1, "受注機種")
-        for w in (self.f_odate, self.f_status, self.f_method, self.f_model):
-            w.pack(fill="x", pady=2, padx=6)
-
-        f2 = ttk.LabelFrame(inner, text="お客様")
-        f2.pack(fill="x", pady=4)
-        self.f_cust = LabeledEntry(f2, "お客様名")
-        self.f_company = LabeledEntry(f2, "会社/発注番号")
-        self.f_postal = LabeledEntry(f2, "郵便番号")
-        self.f_addr = LabeledEntry(f2, "住所", width=40)
-        self.f_phone = LabeledEntry(f2, "電話番号")
-        self.f_email = LabeledEntry(f2, "メール")
-        self.f_yid = LabeledEntry(f2, "Yahoo ID")
-        for w in (self.f_cust, self.f_company, self.f_postal, self.f_addr,
-                  self.f_phone, self.f_email, self.f_yid):
-            w.pack(fill="x", pady=2, padx=6)
-
-        f3 = ttk.LabelFrame(inner, text="金額・入金・出荷予定")
-        f3.pack(fill="x", pady=4)
-        self.f_invoice = LabeledEntry(f3, "請求書番号")
-        self.f_total = LabeledEntry(f3, "合計金額")
-        self.f_freight = LabeledEntry(f3, "送料")
-        self.f_pay = LabeledCombo(f3, "入金状態", PAYMENT_STATUSES)
-        self.f_paydate = LabeledEntry(f3, "入金日")
-        self.f_dship = LabeledEntry(f3, "希望出荷日")
-        self.f_insp = LabeledCombo(f3, "検品状態", INSPECTION_STATUSES)
-        for w in (self.f_invoice, self.f_total, self.f_freight, self.f_pay,
-                  self.f_paydate, self.f_dship, self.f_insp):
-            w.pack(fill="x", pady=2, padx=6)
-
-        self.f_memo = LabeledEntry(inner, "メモ", width=50)
-        self.f_memo.pack(fill="x", pady=6)
-
-    def _build_ship(self):
-        # destroyed and rebuilt each time
-        if hasattr(self, "ship_frame") and self.ship_frame.winfo_exists():
-            self.ship_frame.destroy()
-        self.ship_frame = ttk.Frame(self.right)
-
+    def _build_ship_widgets(self):
+        self.ship_frame = ttk.Frame(self.editor)
         head = ttk.Frame(self.ship_frame)
         head.pack(fill="x", pady=(0, 4))
-        ttk.Label(head, text=f"出荷確定 受注#{self.selected_order_id}",
-                  font=("", 12, "bold")).pack(side="left")
+        ttk.Label(head, text="出荷確定", font=("", 11, "bold")).pack(side="left")
         ttk.Button(head, text="← 戻る", command=self._show_form).pack(side="right", padx=2)
-        ttk.Button(head, text="✓ 出荷確定", command=self._confirm_ship).pack(side="right", padx=2)
+        ttk.Button(head, text="✓ この個体で出荷確定",
+                   command=self._confirm_ship).pack(side="right", padx=2)
 
-        info = ttk.LabelFrame(self.ship_frame, text="受注内容")
-        info.pack(fill="x", pady=4)
-        with connect() as conn:
-            o = conn.execute("SELECT * FROM orders WHERE id=?",
-                             (self.selected_order_id,)).fetchone()
-        if o:
-            ttk.Label(info, text=(
-                f"お客様: {o['customer_name'] or ''}  会社: {o['customer_company'] or ''}\n"
-                f"受注機種: {o['model_requested'] or ''}  "
-                f"合計: {o['total_amount'] or ''}  入金: {o['payment_status'] or ''}"
-            ), justify="left").pack(anchor="w", padx=6, pady=4)
+        self.ship_info_var = tk.StringVar(value="")
+        ttk.Label(self.ship_frame, textvariable=self.ship_info_var,
+                  justify="left").pack(anchor="w", padx=4, pady=4)
 
         filt = ttk.Frame(self.ship_frame)
         filt.pack(fill="x", pady=4)
         ttk.Label(filt, text="在庫から個体を選択 — 絞り込み:").pack(side="left")
-        self.ship_q = tk.StringVar(value=(o["model_requested"] if o else ""))
-        self.ship_q.trace_add("write", lambda *_: self._refresh_ship_units())
-        ttk.Entry(filt, textvariable=self.ship_q, width=24).pack(side="left", padx=4)
+        self.ship_q = tk.StringVar()
+        sent = ttk.Entry(filt, textvariable=self.ship_q, width=24)
+        sent.pack(side="left", padx=4)
+        sent.bind("<KeyRelease>", lambda _e: self._refresh_ship_units())
 
         self.ship_tree = ttk.Treeview(self.ship_frame,
             columns=("serial", "model", "mfg", "purchase"),
-            show="headings", height=15)
-        for k, t, w in [("serial", "シリアル", 110),
-                        ("model", "機種", 200),
-                        ("mfg", "製造日", 90),
-                        ("purchase", "入荷日", 90)]:
+            show="headings", height=10)
+        for k, t, w in [("serial", "シリアル", 110), ("model", "機種", 200),
+                        ("mfg", "製造日", 90), ("purchase", "入荷日", 90)]:
             self.ship_tree.heading(k, text=t)
             self.ship_tree.column(k, width=w, anchor="w")
-        self.ship_tree.pack(fill="both", expand=True, pady=4)
+        self.ship_tree.pack(fill="x", pady=4)
 
         date_row = ttk.Frame(self.ship_frame)
         date_row.pack(fill="x", pady=4)
         self.f_ddate = LabeledEntry(date_row, "実出荷日")
-        self.f_ddate.set(today())
         self.f_ddate.pack(side="left")
 
-        self._refresh_ship_units()
+    def _reset_form(self):
+        for w in (self.f_odate, self.f_status, self.f_method, self.f_model,
+                  self.f_cust, self.f_company, self.f_postal, self.f_addr,
+                  self.f_phone, self.f_email, self.f_yid, self.f_invoice,
+                  self.f_total, self.f_freight, self.f_pay, self.f_paydate,
+                  self.f_dship, self.f_insp, self.f_memo):
+            w.set("")
+        self.f_odate.set(today())
+        self.f_status.set("受注")
+        self.f_pay.set("未入金")
+        self.f_insp.set("未検品")
+
+    def _populate_form(self):
+        with connect() as conn:
+            o = conn.execute("SELECT * FROM orders WHERE id=?",
+                             (self.selected_order_id,)).fetchone()
+        if not o:
+            return
+        self.f_odate.set(o["order_date"] or "")
+        self.f_status.set(o["status"] or "受注")
+        self.f_method.set(o["sale_method"] or "")
+        self.f_model.set(o["model_requested"] or "")
+        self.f_cust.set(o["customer_name"] or "")
+        self.f_company.set(o["customer_company"] or "")
+        self.f_postal.set(o["postal"] or "")
+        self.f_addr.set(o["address"] or "")
+        self.f_phone.set(o["phone"] or "")
+        self.f_email.set(o["email"] or "")
+        self.f_yid.set(o["yahoo_id"] or "")
+        self.f_invoice.set(o["invoice_no"] or "")
+        self.f_total.set(str(o["total_amount"]) if o["total_amount"] is not None else "")
+        self.f_freight.set(str(o["freight"]) if o["freight"] is not None else "")
+        self.f_pay.set(o["payment_status"] or "未入金")
+        self.f_paydate.set(o["payment_date"] or "")
+        self.f_dship.set(o["desired_ship_date"] or "")
+        self.f_insp.set(o["inspection_status"] or "未検品")
+        self.f_memo.set(o["memo"] or "")
 
     def _show_form(self):
-        if hasattr(self, "ship_frame") and self.ship_frame.winfo_exists():
+        # Only touch geometry when the view actually changes. Re-packing an
+        # already-visible frame from inside an event handler (e.g. the order
+        # list <<TreeviewSelect>>) re-triggers layout and storms the Tk event
+        # loop in this build.
+        if self.mode != "form":
+            self.mode = "form"
             self.ship_frame.pack_forget()
-        self.form_frame.pack(fill="both", expand=True)
-        self.mode = "form"
-        self.mode_label.config(text="編集モード")
+            self.form_frame.pack(fill="both", expand=True)
+        if self.selected_order_id:
+            self._populate_form()
+            self.mode_label.config(text=f"編集モード: 受注 #{self.selected_order_id}")
+        else:
+            self._reset_form()
+            self.mode_label.config(text="編集モード: 新規")
 
     def _show_ship(self):
         if not self.selected_order_id:
@@ -392,10 +407,18 @@ class OrderTab(ttk.Frame):
         if o["status"] == "出荷済":
             messagebox.showinfo("情報", "この受注は既に出荷済みです")
             return
-        self.form_frame.pack_forget()
-        self._build_ship()
-        self.ship_frame.pack(fill="both", expand=True)
         self.mode = "ship"
+        self.ship_info_var.set(
+            f"受注#{o['id']}   お客様: {o['customer_name'] or ''}   "
+            f"会社: {o['customer_company'] or ''}   "
+            f"受注機種: {o['model_requested'] or ''}   "
+            f"合計: {o['total_amount'] or ''}"
+        )
+        self.ship_q.set(o["model_requested"] or "")
+        self.f_ddate.set(today())
+        self.form_frame.pack_forget()
+        self.ship_frame.pack(fill="both", expand=True)
+        self._refresh_ship_units()
         self.mode_label.config(text="出荷確定モード")
 
     # --------------- data ---------------
@@ -438,35 +461,19 @@ class OrderTab(ttk.Frame):
         self.count_label.config(text=f"{len(rows)} 件")
 
     def _on_select(self, _evt=None):
+        # Keep the selection handler cheap: only record the id. Rebuilding the
+        # form here (inside the <<TreeviewSelect>> callback) re-enters Tk's
+        # event loop and freezes the app in this build. The user loads the
+        # record into the form explicitly with the 編集 button (or double-click).
         sel = self.tree.selection()
-        if not sel:
+        if sel:
+            self.selected_order_id = int(sel[0])
+
+    def _edit(self):
+        if not self.selected_order_id:
+            messagebox.showinfo("情報", "編集する受注を一覧から選択してください")
             return
-        self.selected_order_id = int(sel[0])
-        with connect() as conn:
-            o = conn.execute("SELECT * FROM orders WHERE id=?",
-                             (self.selected_order_id,)).fetchone()
-        if not o:
-            return
-        self.f_odate.set(o["order_date"] or "")
-        self.f_status.set(o["status"] or "受注")
-        self.f_method.set(o["sale_method"] or "")
-        self.f_model.set(o["model_requested"] or "")
-        self.f_cust.set(o["customer_name"] or "")
-        self.f_company.set(o["customer_company"] or "")
-        self.f_postal.set(o["postal"] or "")
-        self.f_addr.set(o["address"] or "")
-        self.f_phone.set(o["phone"] or "")
-        self.f_email.set(o["email"] or "")
-        self.f_yid.set(o["yahoo_id"] or "")
-        self.f_invoice.set(o["invoice_no"] or "")
-        self.f_total.set(str(o["total_amount"]) if o["total_amount"] is not None else "")
-        self.f_freight.set(str(o["freight"]) if o["freight"] is not None else "")
-        self.f_pay.set(o["payment_status"] or "未入金")
-        self.f_paydate.set(o["payment_date"] or "")
-        self.f_dship.set(o["desired_ship_date"] or "")
-        self.f_insp.set(o["inspection_status"] or "未検品")
-        self.f_memo.set(o["memo"] or "")
-        self.mode_label.config(text=f"編集モード: 受注 #{self.selected_order_id}")
+        self._show_form()
 
     def _new(self):
         self.selected_order_id = None
@@ -474,21 +481,11 @@ class OrderTab(ttk.Frame):
             self.tree.selection_remove(*self.tree.selection())
         except Exception:
             pass
-        self._clear()
-        self.mode_label.config(text="編集モード: 新規")
+        self._show_form()
 
     def _clear(self):
-        for w in (self.f_odate, self.f_status, self.f_method, self.f_model,
-                  self.f_cust, self.f_company, self.f_postal, self.f_addr,
-                  self.f_phone, self.f_email, self.f_yid,
-                  self.f_invoice, self.f_total, self.f_freight,
-                  self.f_pay, self.f_paydate, self.f_dship, self.f_insp,
-                  self.f_memo):
-            w.set("")
-        self.f_odate.set(today())
-        self.f_status.set("受注")
-        self.f_pay.set("未入金")
-        self.f_insp.set("未検品")
+        self.selected_order_id = None
+        self._show_form()
 
     def _save(self):
         cust = self.f_cust.get()
