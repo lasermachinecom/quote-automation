@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS orders (
     yahoo_id          TEXT,
     sale_method       TEXT,
     model_requested   TEXT,
+    serial_no         TEXT,
     invoice_no        TEXT,
     total_amount      INTEGER,
     freight           INTEGER,
@@ -111,6 +112,14 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Lightweight migrations for databases created by older versions."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(orders)")}
+    if "serial_no" not in cols:
+        conn.execute("ALTER TABLE orders ADD COLUMN serial_no TEXT")
 
 
 @contextmanager

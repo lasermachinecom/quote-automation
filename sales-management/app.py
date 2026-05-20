@@ -33,6 +33,12 @@ STATUS_COLORS = {
     "保留":   "#f3d4ff",
     "返品":   "#ffd6d6",
 }
+# Background tints for in-progress order rows shown in the 一覧 tab.
+ORDER_ROW_COLORS = {
+    "受注_受注":   "#ffe9c7",   # order placed (orange tint)
+    "受注_入金済": "#fff3b0",   # paid (amber)
+    "受注_検品済": "#d9ead3",   # inspected (pale green)
+}
 SALE_METHODS = ["ヤフオク", "会社直販", "直メール", "Y直メ", "代理店", "1円スタート", "1円即決", "レンタル", "その他"]
 PAYMENT_STATUSES = ["未入金", "入金済", "一部入金", "保留"]
 ORDER_STATUSES = ["受注", "入金済", "検品済", "出荷済", "キャンセル"]
@@ -282,6 +288,7 @@ class OrderTab(ttk.Frame):
         self.f_status = LabeledCombo(grid, "状態", ORDER_STATUSES)
         self.f_method = LabeledCombo(grid, "販売方法", SALE_METHODS)
         self.f_model = LabeledEntry(grid, "受注機種")
+        self.f_serial = LabeledEntry(grid, "シリアル")
         self.f_cust = LabeledEntry(grid, "お客様名")
         self.f_company = LabeledEntry(grid, "会社/発注番号")
         self.f_postal = LabeledEntry(grid, "郵便番号")
@@ -299,10 +306,10 @@ class OrderTab(ttk.Frame):
         self.f_memo = LabeledEntry(grid, "メモ")
 
         fields = [self.f_odate, self.f_status, self.f_method, self.f_model,
-                  self.f_cust, self.f_company, self.f_postal, self.f_addr,
-                  self.f_phone, self.f_email, self.f_yid, self.f_invoice,
-                  self.f_total, self.f_freight, self.f_pay, self.f_paydate,
-                  self.f_dship, self.f_insp, self.f_memo]
+                  self.f_serial, self.f_cust, self.f_company, self.f_postal,
+                  self.f_addr, self.f_phone, self.f_email, self.f_yid,
+                  self.f_invoice, self.f_total, self.f_freight, self.f_pay,
+                  self.f_paydate, self.f_dship, self.f_insp, self.f_memo]
         for i, w in enumerate(fields):
             w.grid(row=i // 2, column=i % 2, sticky="ew", padx=6, pady=3)
 
@@ -343,10 +350,10 @@ class OrderTab(ttk.Frame):
 
     def _reset_form(self):
         for w in (self.f_odate, self.f_status, self.f_method, self.f_model,
-                  self.f_cust, self.f_company, self.f_postal, self.f_addr,
-                  self.f_phone, self.f_email, self.f_yid, self.f_invoice,
-                  self.f_total, self.f_freight, self.f_pay, self.f_paydate,
-                  self.f_dship, self.f_insp, self.f_memo):
+                  self.f_serial, self.f_cust, self.f_company, self.f_postal,
+                  self.f_addr, self.f_phone, self.f_email, self.f_yid,
+                  self.f_invoice, self.f_total, self.f_freight, self.f_pay,
+                  self.f_paydate, self.f_dship, self.f_insp, self.f_memo):
             w.set("")
         self.f_odate.set(today())
         self.f_status.set("受注")
@@ -363,6 +370,7 @@ class OrderTab(ttk.Frame):
         self.f_status.set(o["status"] or "受注")
         self.f_method.set(o["sale_method"] or "")
         self.f_model.set(o["model_requested"] or "")
+        self.f_serial.set(o["serial_no"] or "")
         self.f_cust.set(o["customer_name"] or "")
         self.f_company.set(o["customer_company"] or "")
         self.f_postal.set(o["postal"] or "")
@@ -456,7 +464,7 @@ class OrderTab(ttk.Frame):
                 r["model_requested"] or "",
                 f"{total:,}" if total is not None else "",
                 r["payment_status"] or "",
-                r["assigned_serial"] or "",
+                r["assigned_serial"] or r["serial_no"] or "",
             ))
         self.count_label.config(text=f"{len(rows)} 件")
 
@@ -504,6 +512,7 @@ class OrderTab(ttk.Frame):
             "yahoo_id": self.f_yid.get() or None,
             "sale_method": self.f_method.get() or None,
             "model_requested": model or None,
+            "serial_no": self.f_serial.get() or None,
             "invoice_no": self.f_invoice.get() or None,
             "total_amount": parse_int(self.f_total.get()),
             "freight": parse_int(self.f_freight.get()),
@@ -601,15 +610,19 @@ class OrderTab(ttk.Frame):
                      o.get("memo")),
                 )
                 sale_id = cur.lastrowid
+                urow = conn.execute(
+                    "SELECT serial_no FROM units WHERE id=?", (unit_id,)
+                ).fetchone()
+                unit_serial = urow["serial_no"] if urow else None
                 conn.execute(
                     "UPDATE units SET status='出荷済', updated_at=datetime('now','localtime') WHERE id=?",
                     (unit_id,),
                 )
                 conn.execute(
                     """UPDATE orders SET status='出荷済',
-                       assigned_unit_id=?, sale_id=?,
+                       assigned_unit_id=?, sale_id=?, serial_no=COALESCE(serial_no, ?),
                        updated_at=datetime('now','localtime') WHERE id=?""",
-                    (unit_id, sale_id, oid),
+                    (unit_id, sale_id, unit_serial, oid),
                 )
         except Exception as e:
             messagebox.showerror("エラー", f"出荷確定失敗: {e}")
@@ -658,11 +671,12 @@ class MasterTab(ttk.Frame):
 
         ttk.Button(top, text="CSV書き出し", command=self._export).pack(side="right", padx=4)
 
-        cols = ("status", "serial", "model", "mfg_date",
+        cols = ("kind", "status", "serial", "model", "mfg_date",
                 "purchase_date", "vendor", "amount",
                 "sale_date", "customer", "address", "total", "payment", "memo")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=22)
         for k, t, w, a in [
+            ("kind", "種別", 70, "w"),
             ("status", "状態", 70, "w"),
             ("serial", "シリアル", 110, "w"),
             ("model", "機種", 180, "w"),
@@ -670,16 +684,18 @@ class MasterTab(ttk.Frame):
             ("purchase_date", "入荷日", 90, "w"),
             ("vendor", "仕入先", 160, "w"),
             ("amount", "入荷金額", 90, "e"),
-            ("sale_date", "出荷日", 90, "w"),
-            ("customer", "購入者", 140, "w"),
+            ("sale_date", "出荷/希望日", 90, "w"),
+            ("customer", "購入者/お客様", 140, "w"),
             ("address", "住所", 180, "w"),
-            ("total", "売上金額", 90, "e"),
+            ("total", "金額", 90, "e"),
             ("payment", "入金", 60, "w"),
             ("memo", "メモ", 180, "w"),
         ]:
             self.tree.heading(k, text=t, command=lambda c=k: self._sort(c))
             self.tree.column(k, width=w, anchor=a)
         for st, color in STATUS_COLORS.items():
+            self.tree.tag_configure(st, background=color)
+        for st, color in ORDER_ROW_COLORS.items():
             self.tree.tag_configure(st, background=color)
         self.tree.pack(fill="both", expand=True, pady=4)
         self.tree.bind("<Double-1>", self._open_detail)
@@ -722,19 +738,67 @@ class MasterTab(ttk.Frame):
             params += [like, like, like, like]
         sql += " ORDER BY u.model, u.id"
 
+        # In-progress orders (not yet shipped to a physical unit, not
+        # cancelled) so 受注→入金→出荷 progress shows up in the same 一覧.
+        order_sql = """
+            SELECT o.id, o.serial_no, o.model_requested, o.status,
+                   o.order_date, o.desired_ship_date, o.customer_name,
+                   o.customer_company, o.address, o.total_amount,
+                   o.payment_status, o.memo
+            FROM orders o
+            WHERE o.assigned_unit_id IS NULL
+              AND o.status NOT IN ('出荷済', 'キャンセル')
+        """
+        order_params: list = []
+        if kw:
+            order_sql += (" AND (o.model_requested LIKE ? OR o.serial_no LIKE ?"
+                          " OR o.customer_name LIKE ? OR o.customer_company LIKE ?)")
+            like = f"%{kw}%"
+            order_params += [like, like, like, like]
+        order_sql += " ORDER BY o.order_date DESC, o.id DESC"
+
+        show_orders = (st == "(全部)")
+
         with connect() as conn:
             rows = list(conn.execute(sql, params))
+            order_rows = list(conn.execute(order_sql, order_params)) if show_orders else []
 
         self.tree.delete(*self.tree.get_children())
         from collections import Counter
         counter: Counter = Counter()
         in_stock_amount = 0
+
+        # In-progress orders first, so they stay visible at the top.
+        for r in order_rows:
+            tot = r["total_amount"]
+            tag_key = f"受注_{r['status']}"
+            tag = (tag_key,) if tag_key in ORDER_ROW_COLORS else ()
+            cust = (r["customer_name"] or "") + (
+                f" / {r['customer_company']}" if r["customer_company"] else "")
+            self.tree.insert("", "end", iid=f"o{r['id']}", values=(
+                "受注",
+                r["status"] or "",
+                r["serial_no"] or "(未確定)",
+                r["model_requested"] or "",
+                "",
+                "",
+                "",
+                "",
+                r["desired_ship_date"] or "",
+                cust,
+                r["address"] or "",
+                f"{tot:,}" if tot is not None else "",
+                r["payment_status"] or "",
+                (r["memo"] or "").replace("\n", " / "),
+            ), tags=tag)
+
         for r in rows:
             counter[r["status"]] += 1
             amt = r["amount"]
             tot = r["total_amount"]
             tag = (r["status"],) if r["status"] in STATUS_COLORS else ()
-            self.tree.insert("", "end", iid=str(r["id"]), values=(
+            self.tree.insert("", "end", iid=f"u{r['id']}", values=(
+                "在庫個体",
                 r["status"] or "",
                 r["serial_no"] or "",
                 r["model"] or "",
@@ -752,7 +816,9 @@ class MasterTab(ttk.Frame):
             if r["status"] == "在庫" and amt is not None:
                 in_stock_amount += amt
 
-        parts = [f"表示: {len(rows)} 台"]
+        parts = [f"個体: {len(rows)} 台"]
+        if order_rows:
+            parts.append(f"進行中の受注: {len(order_rows)} 件")
         for s in ("在庫", "資産", "部品取り", "出荷済", "予約済", "保留", "返品"):
             if counter[s]:
                 parts.append(f"{s}: {counter[s]}")
@@ -763,7 +829,11 @@ class MasterTab(ttk.Frame):
         sel = self.tree.selection()
         if not sel:
             return
-        unit_id = int(sel[0])
+        iid = sel[0]
+        if iid.startswith("o"):
+            self._open_order_detail(int(iid[1:]))
+            return
+        unit_id = int(iid[1:]) if iid.startswith("u") else int(iid)
         with connect() as conn:
             u = conn.execute("SELECT * FROM units WHERE id=?", (unit_id,)).fetchone()
             p = conn.execute("SELECT * FROM purchases WHERE unit_id=?", (unit_id,)).fetchone()
@@ -801,6 +871,28 @@ class MasterTab(ttk.Frame):
         else:
             lines.append("(出荷情報なし)")
         messagebox.showinfo(f"個体 #{u['id']}", "\n".join(lines))
+
+    def _open_order_detail(self, order_id: int):
+        with connect() as conn:
+            o = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not o:
+            return
+        lines = [
+            f"=== 受注 #{o['id']} （進行中）===",
+            f"状態:       {o['status']}",
+            f"受注日:     {o['order_date'] or ''}",
+            f"お客様:     {o['customer_name'] or ''}",
+            f"会社:       {o['customer_company'] or ''}",
+            f"受注機種:   {o['model_requested'] or ''}",
+            f"シリアル:   {o['serial_no'] or '(未確定)'}",
+            f"合計金額:   {o['total_amount'] or ''}",
+            f"入金状態:   {o['payment_status'] or ''}",
+            f"希望出荷日: {o['desired_ship_date'] or ''}",
+            f"メモ:       {o['memo'] or ''}",
+            "",
+            "※ 編集や出荷確定は「📝 受注」タブで行ってください。",
+        ]
+        messagebox.showinfo(f"受注 #{o['id']}", "\n".join(lines))
 
     def _after_save(self):
         self.refresh()
